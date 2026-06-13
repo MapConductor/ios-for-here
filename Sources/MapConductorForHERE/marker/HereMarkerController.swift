@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import heresdk
 import MapConductorCore
+import UIKit
 
 @MainActor
 final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarkerRenderer> {
@@ -11,6 +12,16 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     private var markerSubscriptions: [String: AnyCancellable] = [:]
     private var draggingMarkerId: String?
     private let defaultIcon: any MarkerIconProtocol = DefaultMarkerIcon()
+    private let defaultMarkerIconForTiling: BitmapIcon = DefaultMarkerIcon().toBitmapIcon()
+
+    var tilingOptions: MarkerTilingOptions = .Default
+    private let tileServer = TileServerRegistry.get(forceNoStoreCache: true)
+    private var tileRenderer: MarkerTileRenderer<MapMarker>?
+    private var tileRouteId: String?
+    private var tiledMarkerIds: Set<String> = []
+    private var tileDataSource: RasterDataSource?
+    private var tileLayer: MapLayer?
+    private var tileGeneration: Int64 = 0
 
     init(mapView: MapView?) {
         self.mapView = mapView
@@ -50,6 +61,8 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
                 guard let self else { return }
                 await self.add(data: markers.map { $0.state })
             }
+        } else {
+            refreshTileLayerIfNeeded()
         }
 
         for marker in markers {
@@ -90,12 +103,142 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     }
 
     func handleTap(at screenPoint: CGPoint) -> Bool {
-        guard let mapView else { return false }
         let bestState = hitTest(at: screenPoint)
         
         guard let bestState else { return false }
         dispatchClick(state: bestState)
         return true
+    }
+
+    override func add(data: [MarkerState]) async {
+        guard tilingOptions.enabled else {
+            await super.add(data: data)
+            removeTileOverlay()
+            return
+        }
+        if tileRenderer == nil {
+            setupTileRenderer()
+        }
+
+        let shouldTileMarkers = data.count >= tilingOptions.minMarkerCount
+        var localTiledMarkerIds = tiledMarkerIds
+        let result = await MarkerIngestionEngine.ingest(
+            data: data,
+            markerManager: markerManager,
+            renderer: renderer,
+            defaultMarkerIcon: defaultMarkerIconForTiling,
+            tilingEnabled: tilingOptions.enabled,
+            tiledMarkerIds: &localTiledMarkerIds,
+            shouldTile: { [shouldTileMarkers] state in
+                shouldTileMarkers && !state.draggable && state.getAnimation() == nil
+            }
+        )
+        tiledMarkerIds = localTiledMarkerIds
+        await restoreNativeMarkersIfNeeded(states: data)
+
+        if result.tiledDataChanged, let tileRenderer {
+            tileRenderer.invalidate()
+            updateTileLayer(hasTiledMarkers: result.hasTiledMarkers)
+        } else if result.hasTiledMarkers {
+            refreshTileLayerIfNeeded()
+        } else {
+            removeTileLayer()
+        }
+    }
+
+    private func restoreNativeMarkersIfNeeded(states: [MarkerState]) async {
+        var added: [MarkerOverlayAddParams] = []
+        added.reserveCapacity(states.count)
+
+        for state in states where !tiledMarkerIds.contains(state.id) {
+            guard let entity = markerManager.getEntity(state.id), entity.marker == nil else { continue }
+            let markerIcon = (state.icon ?? DefaultMarkerIcon()).toBitmapIcon()
+            added.append(MarkerOverlayAddParams(state: state, bitmapIcon: markerIcon))
+        }
+
+        guard !added.isEmpty else { return }
+        let markers = await renderer.onAdd(data: added)
+        for (index, marker) in markers.enumerated() {
+            guard let marker else { continue }
+            markerManager.updateEntity(MarkerEntity(
+                marker: marker,
+                state: added[index].state,
+                visible: true,
+                isRendered: true
+            ))
+        }
+        await renderer.onPostProcess()
+    }
+
+    override func update(state: MarkerState) async {
+        guard markerManager.hasEntity(state.id),
+              let prevEntity = markerManager.getEntity(state.id) else { return }
+
+        let currentFinger = state.fingerPrint()
+        let prevFinger = prevEntity.fingerPrint
+        if currentFinger == prevFinger { return }
+
+        let tilingEnabled = tilingOptions.enabled && markerManager.allEntities().count >= tilingOptions.minMarkerCount
+        let wantsTiled = tilingEnabled && !state.draggable && state.getAnimation() == nil
+        let wasTiled = tiledMarkerIds.contains(state.id)
+
+        if wantsTiled {
+            if !wasTiled {
+                if prevEntity.marker != nil {
+                    await renderer.onRemove(data: [prevEntity])
+                }
+                tiledMarkerIds.insert(state.id)
+            }
+            markerManager.updateEntity(MarkerEntity(
+                marker: nil,
+                state: state,
+                visible: prevEntity.visible,
+                isRendered: true
+            ))
+            await renderer.onPostProcess()
+            tileRenderer?.invalidate()
+            updateTileLayer(hasTiledMarkers: true)
+            return
+        }
+
+        if wasTiled {
+            tiledMarkerIds.remove(state.id)
+            let markerIcon = (state.icon ?? DefaultMarkerIcon()).toBitmapIcon()
+            let markers = await renderer.onAdd(data: [MarkerOverlayAddParams(state: state, bitmapIcon: markerIcon)])
+            if let marker = markers.first ?? nil {
+                let entity = MarkerEntity(
+                    marker: marker,
+                    state: state,
+                    visible: prevEntity.visible,
+                    isRendered: true
+                )
+                markerManager.updateEntity(entity)
+                if state.getAnimation() != nil {
+                    await renderer.onAnimate(entity: entity)
+                }
+            }
+            await renderer.onPostProcess()
+            tileRenderer?.invalidate()
+            updateTileLayer(hasTiledMarkers: !tiledMarkerIds.isEmpty)
+            return
+        }
+
+        await super.update(state: state)
+        if !tiledMarkerIds.isEmpty {
+            tileRenderer?.invalidate()
+            updateTileLayer(hasTiledMarkers: true)
+        }
+    }
+
+    override func clear() async {
+        let entities = markerManager.allEntities()
+        let nativeEntities = entities.filter { $0.marker != nil }
+        if !nativeEntities.isEmpty {
+            await renderer.onRemove(data: nativeEntities)
+        }
+        markerManager.clear()
+        tiledMarkerIds.removeAll()
+        removeTileOverlay()
     }
     
 
@@ -166,6 +309,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         markerSubscriptions.removeAll()
         markerStatesById.removeAll()
         draggingMarkerId = nil
+        removeTileOverlay()
         renderer.unbind()
         mapView = nil
         destroy()
@@ -173,5 +317,100 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
 
     private func draggableMarkerState(at origin: Point2D) -> MarkerState? {
         return hitTest(at: CGPoint(x: origin.x, y: origin.y))
+    }
+
+    private static var retinaAwareTileSize: Int {
+        256 * max(1, Int(UIScreen.main.scale))
+    }
+
+    private func setupTileRenderer() {
+        let routeId = "mapconductor-markers-\(UUID().uuidString)"
+        let contentScale = Double(UIScreen.main.scale)
+        let baseCallback = tilingOptions.iconScaleCallback
+        let scaledCallback: ((MarkerState, Int) -> Double)? = { state, zoom in
+            (baseCallback?(state, zoom) ?? 1.0) * contentScale
+        }
+        let renderer = MarkerTileRenderer<MapMarker>(
+            markerManager: markerManager,
+            tileSize: Self.retinaAwareTileSize,
+            cacheSizeBytes: tilingOptions.cacheSize,
+            debugTileOverlay: tilingOptions.debugTileOverlay,
+            iconScaleCallback: scaledCallback
+        )
+        tileServer.register(routeId: routeId, provider: renderer)
+        tileRenderer = renderer
+        tileRouteId = routeId
+    }
+
+    private func refreshTileLayerIfNeeded() {
+        guard !tiledMarkerIds.isEmpty, tileLayer == nil else { return }
+        updateTileLayer(hasTiledMarkers: true)
+    }
+
+    private func updateTileLayer(hasTiledMarkers: Bool) {
+        guard hasTiledMarkers else {
+            removeTileLayer()
+            return
+        }
+        if tileRenderer == nil {
+            setupTileRenderer()
+        }
+        guard let mapView, let routeId = tileRouteId, let tileRenderer else { return }
+
+        tileGeneration += 1
+        removeTileLayer()
+
+        let cacheKey = String(tileGeneration)
+        let tileTemplate = tileServer.urlTemplate(routeId: routeId, tileSize: tileRenderer.tileSize, cacheKey: cacheKey)
+        guard let urlProvider = TileUrlProviderFactory.fromXyzUrlTemplate(tileTemplate) else { return }
+
+        let providerConfig = RasterDataSourceConfiguration.Provider(
+            urlProvider: urlProvider,
+            tilingScheme: .quadTreeMercator,
+            storageLevels: Array(0...22).map(Int32.init),
+            hasAlphaChannel: true
+        )
+        let cache = RasterDataSourceConfiguration.Cache(path: tileCacheDirectoryPath())
+        let sourceName = "mapconductor-marker-tiles-source-\(routeId)-\(tileGeneration)"
+        let layerName = "mapconductor-marker-tiles-layer-\(routeId)-\(tileGeneration)"
+        let config = RasterDataSourceConfiguration(name: sourceName, provider: providerConfig, cache: cache)
+        let dataSource = RasterDataSource(context: mapView.mapContext, configuration: config)
+
+        do {
+            let layer = try MapLayerBuilder()
+                .withName(layerName)
+                .withDataSource(named: sourceName, contentType: .rasterImage)
+                .forMap(mapView.hereMap)
+                .build()
+            layer.setEnabled(true)
+            tileDataSource = dataSource
+            tileLayer = layer
+        } catch {
+            NSLog("[MapConductor] HERE marker tile layer creation failed: %@", String(describing: error))
+        }
+    }
+
+    private func removeTileLayer() {
+        tileLayer?.setEnabled(false)
+        tileLayer = nil
+        tileDataSource = nil
+    }
+
+    private func removeTileOverlay() {
+        removeTileLayer()
+        if let routeId = tileRouteId {
+            tileServer.unregister(routeId: routeId)
+        }
+        tileRenderer = nil
+        tileRouteId = nil
+        tiledMarkerIds.removeAll()
+    }
+
+    private func tileCacheDirectoryPath() -> String {
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let cacheURL = url.appendingPathComponent("MapConductorHEREMarkerTiles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+        return cacheURL.path
     }
 }

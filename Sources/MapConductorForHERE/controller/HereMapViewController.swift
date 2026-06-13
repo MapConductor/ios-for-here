@@ -24,6 +24,7 @@ final class HereMapViewController: NSObject,
     private var mapLongClickListener: OnMapEventHandler?
     private var tapHandler: ((Point2D, GeoPoint) -> Bool)?
     private var panHandler: ((GestureState, Point2D) -> Bool)?
+    private var longPressHandler: ((GestureState, Point2D) -> Bool)?
     private var mapDesignType: HereMapDesignType = HereMapDesign.NormalDay
     private var mapDesignTypeChangeListener: HereMapDesignTypeChangeHandler?
     private var sceneLoadedHandler: HereSceneLoadedHandler?
@@ -77,6 +78,10 @@ final class HereMapViewController: NSObject,
 
     func setPanHandler(_ handler: ((GestureState, Point2D) -> Bool)?) {
         panHandler = handler
+    }
+
+    func setLongPressHandler(_ handler: ((GestureState, Point2D) -> Bool)?) {
+        longPressHandler = handler
     }
 
     func moveCamera(position: MapCameraPosition) {
@@ -154,6 +159,8 @@ final class HereMapViewController: NSObject,
     }
 
     func onLongPress(state: GestureState, origin: Point2D) {
+        // Marker dragging consumes the whole long-press gesture (begin/update/end).
+        if longPressHandler?(state, origin) == true { return }
         guard state == .begin else { return }
         guard let point = hereHolder.mapView.viewToGeoCoordinates(viewCoordinates: origin)?.toGeoPoint() else { return }
         mapLongClickListener?(point)

@@ -248,8 +248,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             controller.setTapHandler { [weak self] origin, point in
                 self?.handleTap(origin: origin, point: point) ?? false
             }
-            controller.setPanHandler { [weak self] state, origin in
-                self?.markerController?.handlePan(state: state, origin: origin) ?? false
+            controller.setLongPressHandler { [weak self] state, origin in
+                self?.markerController?.handleLongPress(state: state, origin: origin) ?? false
             }
         }
 

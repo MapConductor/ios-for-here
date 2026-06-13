@@ -10,7 +10,6 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     private var markerStatesById: [String: MarkerState] = [:]
     private var markerSubscriptions: [String: AnyCancellable] = [:]
     private var draggingMarkerId: String?
-
     private let defaultIcon: any MarkerIconProtocol = DefaultMarkerIcon()
 
     init(mapView: MapView?) {
@@ -57,16 +56,15 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
             subscribeToMarker(marker.state)
         }
     }
-
-    func handleTap(at screenPoint: CGPoint) -> Bool {
-        guard let mapView else { return false }
+    
+    private func hitTest(at screenPoint: CGPoint) -> MarkerState? {
+        guard let mapView else { return nil }
         let pixelScale = CGFloat(mapView.pixelScale)
         // Minimum hit target: 44pt expressed in physical pixels.
         let minHitPx: CGFloat = 44.0 * pixelScale
-
+        
         var bestState: MarkerState?
         var bestDistance = CGFloat.infinity
-
         for entity in markerManager.allEntities() where entity.state.clickable {
             guard let p = mapView.geoToViewCoordinates(geoCoordinates: entity.state.position.toGeoCoordinates()) else { continue }
 
@@ -88,13 +86,23 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
                 bestState = entity.state
             }
         }
+        return bestState
+    }
 
+    func handleTap(at screenPoint: CGPoint) -> Bool {
+        guard let mapView else { return false }
+        let bestState = hitTest(at: screenPoint)
+        
         guard let bestState else { return false }
         dispatchClick(state: bestState)
         return true
     }
+    
 
-    func handlePan(state gestureState: GestureState, origin: Point2D) -> Bool {
+    /// Handles the HERE long-press gesture for marker dragging.
+    /// Drag starts when the user long-presses a draggable marker (.begin),
+    /// continues while the finger moves (.update), and ends on release (.end).
+    func handleLongPress(state gestureState: GestureState, origin: Point2D) -> Bool {
         guard let mapView else { return false }
 
         switch gestureState {
@@ -164,20 +172,6 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     }
 
     private func draggableMarkerState(at origin: Point2D) -> MarkerState? {
-        guard let mapView else { return nil }
-        var bestState: MarkerState?
-        var bestDistance = CGFloat.infinity
-        let hitRadius: CGFloat = 44.0
-
-        for entity in markerManager.allEntities() where entity.state.draggable {
-            guard let point = mapView.geoToViewCoordinates(geoCoordinates: entity.state.position.toGeoCoordinates()) else { continue }
-            let distance = hypot(CGFloat(origin.x - point.x), CGFloat(origin.y - point.y))
-            if distance < hitRadius, distance < bestDistance {
-                bestDistance = distance
-                bestState = entity.state
-            }
-        }
-
-        return bestState
+        return hitTest(at: CGPoint(x: origin.x, y: origin.y))
     }
 }

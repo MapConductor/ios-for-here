@@ -10,6 +10,7 @@ final class HereMapViewController: NSObject,
     @preconcurrency MapViewControllerProtocol,
     @preconcurrency MapCameraDelegate,
     @preconcurrency TapDelegate,
+    @preconcurrency PanDelegate,
     @preconcurrency LongPressDelegate,
     @preconcurrency AnimationDelegate {
     let holder: AnyMapViewHolder
@@ -22,6 +23,7 @@ final class HereMapViewController: NSObject,
     private var mapClickListener: OnMapEventHandler?
     private var mapLongClickListener: OnMapEventHandler?
     private var tapHandler: ((Point2D, GeoPoint) -> Bool)?
+    private var panHandler: ((GestureState, Point2D) -> Bool)?
     private var mapDesignType: HereMapDesignType = HereMapDesign.NormalDay
     private var mapDesignTypeChangeListener: HereMapDesignTypeChangeHandler?
     private var sceneLoadedHandler: HereSceneLoadedHandler?
@@ -71,6 +73,10 @@ final class HereMapViewController: NSObject,
 
     func setTapHandler(_ handler: ((Point2D, GeoPoint) -> Bool)?) {
         tapHandler = handler
+    }
+
+    func setPanHandler(_ handler: ((GestureState, Point2D) -> Bool)?) {
+        panHandler = handler
     }
 
     func moveCamera(position: MapCameraPosition) {
@@ -153,6 +159,10 @@ final class HereMapViewController: NSObject,
         mapLongClickListener?(point)
     }
 
+    func onPan(state: GestureState, origin: Point2D, translation: Point2D, velocity: Double) {
+        if panHandler?(state, origin) == true { return }
+    }
+
     func onAnimationStateChanged(state: AnimationState) {
         switch state {
         case .started:
@@ -176,6 +186,7 @@ final class HereMapViewController: NSObject,
         hereHolder.mapView.camera.removeDelegate(self)
         hereHolder.mapView.camera.addDelegate(self)
         hereHolder.mapView.gestures.tapDelegate = self
+        hereHolder.mapView.gestures.panDelegate = self
         hereHolder.mapView.gestures.longPressDelegate = self
     }
 

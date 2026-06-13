@@ -22,19 +22,28 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
         current: PolylineEntity<MapPolyline>,
         prev: PolylineEntity<MapPolyline>
     ) async -> MapPolyline? {
+        guard let mapView else { return polyline }
         let finger = current.fingerPrint
         let prevFinger = prev.fingerPrint
+        var needsReAdd = false
 
-        if finger.points != prevFinger.points {
-            guard let geometry = makeGeometry(points: current.state.points) else { return polyline }
+        if finger.points != prevFinger.points || finger.geodesic != prevFinger.geodesic {
+            guard let geometry = makeGeometry(state: current.state) else { return polyline }
             polyline.geometry = geometry
+            needsReAdd = true
         }
 
         if finger.strokeColor != prevFinger.strokeColor ||
             finger.strokeWidth != prevFinger.strokeWidth {
             if let representation = makeRepresentation(state: current.state) {
                 polyline.setRepresentation(representation)
+                needsReAdd = true
             }
+        }
+
+        if needsReAdd {
+            mapView.mapScene.removeMapPolyline(polyline)
+            mapView.mapScene.addMapPolyline(polyline)
         }
 
         return polyline
@@ -50,26 +59,30 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
     }
 
     private func makePolyline(state: PolylineState) -> MapPolyline? {
-        guard let geometry = makeGeometry(points: state.points),
+        guard let geometry = makeGeometry(state: state),
               let representation = makeRepresentation(state: state) else { return nil }
         let polyline = MapPolyline(geometry: geometry, representation: representation)
         polyline.drawOrder = 5
         return polyline
     }
 
-    private func makeGeometry(points: [GeoPointProtocol]) -> GeoPolyline? {
-        guard points.count >= 2 else { return nil }
-        return try? GeoPolyline(vertices: points.map { $0.toGeoCoordinates() })
+    private func makeGeometry(state: PolylineState) -> GeoPolyline? {
+        let geoPoints: [GeoPointProtocol] = state.geodesic
+            ? createInterpolatePoints(state.points)
+            : createLinearInterpolatePoints(state.points)
+        guard geoPoints.count >= 2 else { return nil }
+        return try? GeoPolyline(vertices: geoPoints.map { $0.toGeoCoordinates() })
     }
 
     private func makeRepresentation(state: PolylineState) -> MapPolyline.Representation? {
-        guard let width = try? MapMeasureDependentRenderSize(sizeUnit: .densityIndependentPixels, size: max(0.0, state.strokeWidth)) else {
+        let widthInPixels = max(0.0, state.strokeWidth) * Double(UIScreen.main.scale)
+        guard let width = try? MapMeasureDependentRenderSize(sizeUnit: .pixels, size: widthInPixels) else {
             return nil
         }
         return try? MapPolyline.SolidRepresentation(
             lineWidth: width,
             color: state.strokeColor,
-            capShape: .round
+            capShape: .square
         )
     }
 }

@@ -248,6 +248,9 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             controller.setTapHandler { [weak self] origin, point in
                 self?.handleTap(origin: origin, point: point) ?? false
             }
+            controller.setPanHandler { [weak self] state, origin in
+                self?.markerController?.handlePan(state: state, origin: origin) ?? false
+            }
         }
 
         func updateContent(_ content: MapViewContent) {
@@ -296,6 +299,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             state.setMapViewHolder(nil)
             mapView?.camera.removeDelegates()
             mapView?.gestures.tapDelegate = nil
+            mapView?.gestures.panDelegate = nil
             mapView?.gestures.longPressDelegate = nil
             markerController?.unbind()
             markerController = nil

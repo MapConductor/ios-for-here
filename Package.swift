@@ -25,7 +25,7 @@ let package = Package(
         ),
         .binaryTarget(
             name: "heresdk",
-            path: "../../../heresdk/frameworks/heresdk.xcframework"
+            path: "../heresdk/frameworks/heresdk.xcframework"
         ),
     ]
 )

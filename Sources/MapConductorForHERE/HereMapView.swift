@@ -153,6 +153,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private var polylineController: HerePolylineController?
         private var polygonController: HerePolygonController?
         private var circleController: HereCircleController?
+        private var groundImageController: HereGroundImageController?
+        private var rasterLayerController: HereRasterLayerController?
         private var infoBubbleCoordinator: InfoBubbleOverlayCoordinator?
         fileprivate let infoBubbleContainer = PassthroughContainerView()
         private var loadedMapScheme: MapScheme?
@@ -198,10 +200,14 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             let polylineController = HerePolylineController(mapView: mapView)
             let polygonController = HerePolygonController(mapView: mapView)
             let circleController = HereCircleController(mapView: mapView)
+            let groundImageController = HereGroundImageController(mapView: mapView)
+            let rasterLayerController = HereRasterLayerController(mapView: mapView)
             self.markerController = markerController
             self.polylineController = polylineController
             self.polygonController = polygonController
             self.circleController = circleController
+            self.groundImageController = groundImageController
+            self.rasterLayerController = rasterLayerController
 
             self.infoBubbleCoordinator = InfoBubbleOverlayCoordinator(
                 container: infoBubbleContainer,
@@ -262,6 +268,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private func syncContent(_ content: MapViewContent) {
             infoBubbleCoordinator?.syncInfoBubbles(content.infoBubbles)
             markerController?.syncMarkers(content.markers)
+            groundImageController?.syncGroundImages(content.groundImages)
+            rasterLayerController?.syncRasterLayers(content.rasterLayers)
             polylineController?.syncPolylines(content.polylines)
             polygonController?.syncPolygons(content.polygons)
             circleController?.syncCircles(content.circles)
@@ -309,6 +317,10 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             polygonController = nil
             circleController?.unbind()
             circleController = nil
+            groundImageController?.unbind()
+            groundImageController = nil
+            rasterLayerController?.unbind()
+            rasterLayerController = nil
             infoBubbleCoordinator?.unbind()
             infoBubbleCoordinator = nil
             controller?.setSceneLoadedHandler(nil)
@@ -336,6 +348,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                     await self.polylineController?.clear()
                     await self.polygonController?.clear()
                     await self.circleController?.clear()
+                    await self.groundImageController?.clear()
+                    await self.rasterLayerController?.clear()
                     self.syncContent(self.latestContent)
                 }
             } else {
@@ -355,6 +369,9 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                 return true
             }
             if polygonController?.handleTap(at: point) == true {
+                return true
+            }
+            if groundImageController?.handleTap(at: point) == true {
                 return true
             }
             return false

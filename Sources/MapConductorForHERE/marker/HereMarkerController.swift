@@ -22,6 +22,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     private var tileDataSource: RasterDataSource?
     private var tileLayer: MapLayer?
     private var tileGeneration: Int64 = 0
+    private static let tileScale: Double = 2.0
 
     init(mapView: MapView?) {
         self.mapView = mapView
@@ -320,22 +321,18 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     }
 
     private static var retinaAwareTileSize: Int {
-        256 * max(1, Int(UIScreen.main.scale))
+        Int(256.0 * self.tileScale * max(1.0, UIScreen.main.scale))
     }
 
     private func setupTileRenderer() {
         let routeId = "mapconductor-markers-\(UUID().uuidString)"
-        let contentScale = Double(UIScreen.main.scale)
-        let baseCallback = tilingOptions.iconScaleCallback
-        let scaledCallback: ((MarkerState, Int) -> Double)? = { state, zoom in
-            (baseCallback?(state, zoom) ?? 1.0) * contentScale
-        }
         let renderer = MarkerTileRenderer<MapMarker>(
             markerManager: markerManager,
             tileSize: Self.retinaAwareTileSize,
+            extraIconScale: Self.tileScale,
             cacheSizeBytes: tilingOptions.cacheSize,
             debugTileOverlay: tilingOptions.debugTileOverlay,
-            iconScaleCallback: scaledCallback
+            iconScaleCallback: tilingOptions.iconScaleCallback
         )
         tileServer.register(routeId: routeId, provider: renderer)
         tileRenderer = renderer

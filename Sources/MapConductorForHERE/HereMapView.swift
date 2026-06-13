@@ -267,6 +267,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
 
         private func syncContent(_ content: MapViewContent) {
             infoBubbleCoordinator?.syncInfoBubbles(content.infoBubbles)
+            markerController?.tilingOptions = content.markerTilingOptions
             markerController?.syncMarkers(content.markers)
             groundImageController?.syncGroundImages(content.groundImages)
             rasterLayerController?.syncRasterLayers(content.rasterLayers)

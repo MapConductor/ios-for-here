@@ -11,6 +11,9 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
 
     private weak var mapView: MapView?
     private var markerAnimationRunners: [String: MarkerAnimationRunner] = [:]
+    /// Last icon applied to each marker. Used to avoid rebuilding/reassigning the
+    /// underlying MapImage when only the position changed (e.g. during a drag).
+    private var appliedIcons: [String: BitmapIcon] = [:]
 
     var animateStartListener: OnMarkerEventHandler?
     var animateEndListener: OnMarkerEventHandler?
@@ -47,6 +50,7 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
         for entity in data {
             markerAnimationRunners[entity.state.id]?.stop()
             markerAnimationRunners.removeValue(forKey: entity.state.id)
+            appliedIcons.removeValue(forKey: entity.state.id)
             if let marker = entity.marker {
                 mapView.mapScene.removeMapMarker(marker)
             }
@@ -70,6 +74,7 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     func unbind() {
         markerAnimationRunners.values.forEach { $0.stop() }
         markerAnimationRunners.removeAll()
+        appliedIcons.removeAll()
         mapView = nil
     }
 
@@ -78,8 +83,16 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
         marker.anchor = bitmapIcon.toHereAnchor()
         marker.drawOrder = 10
         marker.opacity = (state.getAnimation() != nil && markerAnimationRunners[state.id] == nil) ? 0.0 : 1.0
-        if let image = makeMapImage(bitmapIcon) {
-            marker.image = image
+
+        // Only rebuild and reassign the MapImage when the icon actually changed.
+        // Reassigning marker.image on every update forces HERE to reload the marker
+        // texture; during a drag (which fires many position updates per second) that
+        // makes the marker flicker and disappear until the gesture stops.
+        if appliedIcons[state.id] != bitmapIcon {
+            if let image = makeMapImage(bitmapIcon) {
+                marker.image = image
+                appliedIcons[state.id] = bitmapIcon
+            }
         }
     }
 

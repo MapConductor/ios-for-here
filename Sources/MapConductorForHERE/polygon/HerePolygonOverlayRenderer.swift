@@ -32,7 +32,7 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<MapPolygo
         let finger = current.fingerPrint
         let prevFinger = prev.fingerPrint
 
-        if finger.points != prevFinger.points || finger.holes != prevFinger.holes {
+        if finger.points != prevFinger.points || finger.holes != prevFinger.holes || finger.geodesic != prevFinger.geodesic {
             if let geometry = makeGeometry(state: current.state) {
                 polygon.geometry = geometry
             }
@@ -63,14 +63,15 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<MapPolygo
     }
 
     private func makeGeometry(state: PolygonState) -> GeoPolygon? {
-        let vertices = closedRing(state.points).map { $0.toGeoCoordinates() }
+        let vertices = makeRing(points: state.points, geodesic: state.geodesic).map { $0.toGeoCoordinates() }
         guard vertices.count >= 4 else { return nil }
-        let holes = state.holes.map { closedRing($0).map { $0.toGeoCoordinates() } }
+        let holes = state.holes.map { makeRing(points: $0, geodesic: state.geodesic).map { $0.toGeoCoordinates() } }
         return try? GeoPolygon(vertices: vertices, innerBoundaries: holes)
     }
 
-    private func closedRing(_ points: [GeoPointProtocol]) -> [GeoPointProtocol] {
-        var ring = points.map { $0.normalize() }
+    private func makeRing(points: [GeoPointProtocol], geodesic: Bool) -> [GeoPointProtocol] {
+        var ring = (geodesic ? createInterpolatePoints(points) : createLinearInterpolatePoints(points))
+            .map { $0.normalize() }
         if let first = ring.first, let last = ring.last,
            !(GeoPoint.from(position: first) == GeoPoint.from(position: last)) {
             ring.append(first)

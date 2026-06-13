@@ -321,7 +321,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     }
 
     private static var retinaAwareTileSize: Int {
-        Int(256.0 * self.tileScale * max(1.0, UIScreen.main.scale))
+        Int(512.0 * self.tileScale)
     }
 
     private func setupTileRenderer() {

@@ -33,6 +33,9 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
             removeHandle(layer)
             return addLayer(state: current.state)
         }
+        if finger.debug != prevFinger.debug && current.state.debug {
+            NSLog("[MapConductor] RasterLayer debug mode: id=%@", current.state.id)
+        }
         layer.layer.setEnabled(current.state.visible)
         return layer
     }
@@ -60,6 +63,9 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
         )
         let dataSource = RasterDataSource(context: mapView.mapContext, configuration: config)
 
+        if state.debug {
+            NSLog("[MapConductor] RasterLayer debug mode: id=%@", state.id)
+        }
         do {
             let layer = try MapLayerBuilder()
                 .withName(tileSpec.layerName)

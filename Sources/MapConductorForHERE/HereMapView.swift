@@ -151,6 +151,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         weak var mapView: MapView?
         private var controller: HereMapViewController?
         private var markerController: HereMarkerController?
+        private var markerEventController: (any HereMarkerEventControllerProtocol)?
         private var polylineController: HerePolylineController?
         private var polygonController: HerePolygonController?
         private var circleController: HereCircleController?
@@ -213,6 +214,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             let groundImageController = HereGroundImageController(mapView: mapView)
             let rasterLayerController = HereRasterLayerController(mapView: mapView)
             self.markerController = markerController
+            self.markerEventController = DefaultHereMarkerEventController(markerController: markerController)
             self.polylineController = polylineController
             self.polygonController = polygonController
             self.circleController = circleController
@@ -277,7 +279,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                 self?.handleTap(origin: origin, point: point) ?? false
             }
             controller.setLongPressHandler { [weak self] state, origin in
-                self?.markerController?.handleLongPress(state: state, origin: origin) ?? false
+                self?.markerEventController?.handleLongPress(state: state, origin: origin) ?? false
             }
         }
 
@@ -410,6 +412,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             mapView?.gestures.longPressDelegate = nil
             markerController?.unbind()
             markerController = nil
+            markerEventController = nil
             polylineController?.unbind()
             polylineController = nil
             polygonController?.unbind()
@@ -464,8 +467,9 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         }
 
         private func handleTap(origin: Point2D, point: GeoPoint) -> Bool {
+            // Marker event dispatch is delegated through HereMarkerEventController
             let screenPoint = CGPoint(x: origin.x, y: origin.y)
-            if markerController?.handleTap(at: screenPoint) == true {
+            if markerEventController?.handleTap(at: screenPoint) == true {
                 return true
             }
             if handleStrategyMarkerTap(at: screenPoint) {
@@ -516,6 +520,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private func notifyMapLoadedIfNeeded() {
             guard !didCallMapLoaded else { return }
             didCallMapLoaded = true
+            controller?.notifyMapInitialized()
             onMapLoaded?(state)
         }
     }

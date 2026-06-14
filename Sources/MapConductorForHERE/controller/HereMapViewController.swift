@@ -22,6 +22,7 @@ final class HereMapViewController: NSObject,
     private var cameraMoveEndListener: OnCameraMoveHandler?
     private var mapClickListener: OnMapEventHandler?
     private var mapLongClickListener: OnMapEventHandler?
+    private var mapInitializedListener: OnMapInitializedHandler?
     private var tapHandler: ((Point2D, GeoPoint) -> Bool)?
     private var panHandler: ((GestureState, Point2D) -> Bool)?
     private var longPressHandler: ((GestureState, Point2D) -> Bool)?
@@ -70,6 +71,10 @@ final class HereMapViewController: NSObject,
 
     func setMapLongClickListener(listener: OnMapEventHandler?) {
         mapLongClickListener = listener
+    }
+
+    func setMapInitializedListener(listener: OnMapInitializedHandler?) {
+        mapInitializedListener = listener
     }
 
     func setTapHandler(_ handler: ((Point2D, GeoPoint) -> Bool)?) {
@@ -187,6 +192,10 @@ final class HereMapViewController: NSObject,
         @unknown default:
             isAnimatingCamera = false
         }
+    }
+
+    func notifyMapInitialized() {
+        mapInitializedListener?(.MapCreated)
     }
 
     private func setupListeners() {

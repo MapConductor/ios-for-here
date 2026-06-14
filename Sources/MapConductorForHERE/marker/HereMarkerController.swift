@@ -42,7 +42,9 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
             if let existing = markerStatesById[state.id], existing !== state {
                 markerSubscriptions[state.id]?.cancel()
                 markerSubscriptions.removeValue(forKey: state.id)
-                shouldSyncList = true
+                if existing.fingerPrint() != state.fingerPrint() {
+                    shouldSyncList = true
+                }
             }
             newStatesById[state.id] = state
             if !markerManager.hasEntity(state.id) {

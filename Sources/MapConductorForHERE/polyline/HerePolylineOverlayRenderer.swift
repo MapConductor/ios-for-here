@@ -41,6 +41,11 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
             }
         }
 
+        if finger.zIndex != prevFinger.zIndex {
+            polyline.drawOrder = Int32(truncatingIfNeeded: current.state.zIndex)
+            needsReAdd = true
+        }
+
         if needsReAdd {
             mapView.mapScene.removeMapPolyline(polyline)
             mapView.mapScene.addMapPolyline(polyline)
@@ -62,7 +67,7 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
         guard let geometry = makeGeometry(state: state),
               let representation = makeRepresentation(state: state) else { return nil }
         let polyline = MapPolyline(geometry: geometry, representation: representation)
-        polyline.drawOrder = 5
+        polyline.drawOrder = Int32(truncatingIfNeeded: state.zIndex)
         return polyline
     }
 

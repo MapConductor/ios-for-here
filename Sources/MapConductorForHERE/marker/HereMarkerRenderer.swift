@@ -11,9 +11,11 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
 
     private weak var mapView: MapView?
     private var markerAnimationRunners: [String: MarkerAnimationRunner] = [:]
-    /// Last icon applied to each marker. Used to avoid rebuilding/reassigning the
-    /// underlying MapImage when only the position changed (e.g. during a drag).
-    private var appliedIcons: [String: BitmapIcon] = [:]
+    /// Content hash of the last icon applied to each marker. Used to avoid
+    /// rebuilding/reassigning the underlying MapImage when only the position changed
+    /// (e.g. during a drag or a SwiftUI body re-evaluation that creates new icon objects
+    /// with identical content).
+    private var appliedIconHashes: [String: Int] = [:]
 
     var animateStartListener: OnMarkerEventHandler?
     var animateEndListener: OnMarkerEventHandler?
@@ -25,13 +27,20 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     func onAdd(data: [MarkerOverlayAddParams]) async -> [MapMarker?] {
         guard let mapView else { return [] }
         return data.map { params in
-            guard let image = makeMapImage(params.bitmapIcon) else { return nil }
+            let bitmapIcon = params.bitmapIcon
+            let state = params.state
+            guard let pngData = bitmapIcon.bitmap.pngData() else { return nil }
+            let width = UInt32(bitmapIcon.bitmap.cgImage?.width ?? Int(bitmapIcon.size.width))
+            let height = UInt32(bitmapIcon.bitmap.cgImage?.height ?? Int(bitmapIcon.size.height))
+            let image = MapImage(imageData: pngData, imageFormat: .png, width: width, height: height)
             let marker = MapMarker(
-                at: params.state.position.toGeoCoordinates(),
+                at: state.position.toGeoCoordinates(),
                 image: image,
-                anchor: params.bitmapIcon.toHereAnchor()
+                anchor: bitmapIcon.toHereAnchor()
             )
-            apply(state: params.state, bitmapIcon: params.bitmapIcon, to: marker)
+            marker.drawOrder = Int32(truncatingIfNeeded: state.zIndex ?? 0)
+            marker.opacity = (state.getAnimation() != nil && markerAnimationRunners[state.id] == nil) ? 0.0 : 1.0
+            appliedIconHashes[state.id] = iconContentHash(pngData, bitmapIcon)
             mapView.mapScene.addMapMarker(marker)
             return marker
         }
@@ -50,7 +59,7 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
         for entity in data {
             markerAnimationRunners[entity.state.id]?.stop()
             markerAnimationRunners.removeValue(forKey: entity.state.id)
-            appliedIcons.removeValue(forKey: entity.state.id)
+            appliedIconHashes.removeValue(forKey: entity.state.id)
             if let marker = entity.marker {
                 mapView.mapScene.removeMapMarker(marker)
             }
@@ -74,26 +83,39 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     func unbind() {
         markerAnimationRunners.values.forEach { $0.stop() }
         markerAnimationRunners.removeAll()
-        appliedIcons.removeAll()
+        appliedIconHashes.removeAll()
         mapView = nil
     }
 
     private func apply(state: MarkerState, bitmapIcon: BitmapIcon, to marker: MapMarker) {
         marker.coordinates = state.position.toGeoCoordinates()
         marker.anchor = bitmapIcon.toHereAnchor()
-        marker.drawOrder = 10
+        marker.drawOrder = Int32(truncatingIfNeeded: state.zIndex ?? 0)
         marker.opacity = (state.getAnimation() != nil && markerAnimationRunners[state.id] == nil) ? 0.0 : 1.0
 
-        // Only rebuild and reassign the MapImage when the icon actually changed.
-        // Reassigning marker.image on every update forces HERE to reload the marker
-        // texture; during a drag (which fires many position updates per second) that
-        // makes the marker flicker and disappear until the gesture stops.
-        if appliedIcons[state.id] != bitmapIcon {
-            if let image = makeMapImage(bitmapIcon) {
-                marker.image = image
-                appliedIcons[state.id] = bitmapIcon
-            }
+        // Only rebuild and reassign the MapImage when the icon content actually changed.
+        // Reassigning marker.image on every update forces HERE to reload the marker texture;
+        // during panning (SwiftUI body re-evaluations create new icon objects each frame)
+        // that makes markers flicker. We hash the PNG bytes so two separately allocated
+        // UIImage objects with identical pixels are treated as equal.
+        guard let data = bitmapIcon.bitmap.pngData() else { return }
+        let iconHash = iconContentHash(data, bitmapIcon)
+        if appliedIconHashes[state.id] != iconHash {
+            let width = UInt32(bitmapIcon.bitmap.cgImage?.width ?? Int(bitmapIcon.size.width))
+            let height = UInt32(bitmapIcon.bitmap.cgImage?.height ?? Int(bitmapIcon.size.height))
+            let image = MapImage(imageData: data, imageFormat: .png, width: width, height: height)
+            marker.image = image
+            appliedIconHashes[state.id] = iconHash
         }
+    }
+
+    private func iconContentHash(_ data: Data, _ bitmapIcon: BitmapIcon) -> Int {
+        var hasher = Hasher()
+        hasher.combine(data)
+        hasher.combine(bitmapIcon.anchor.x)
+        hasher.combine(bitmapIcon.anchor.y)
+        hasher.combine(bitmapIcon.debug)
+        return hasher.finalize()
     }
 
     private func animateMarker(
@@ -203,12 +225,6 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
         return -max(32.0 * mapView.pixelScale, viewportHeight * 0.2)
     }
 
-    private func makeMapImage(_ bitmapIcon: BitmapIcon) -> MapImage? {
-        guard let data = bitmapIcon.bitmap.pngData() else { return nil }
-        let width = UInt32(bitmapIcon.bitmap.cgImage?.width ?? Int(bitmapIcon.size.width))
-        let height = UInt32(bitmapIcon.bitmap.cgImage?.height ?? Int(bitmapIcon.size.height))
-        return MapImage(imageData: data, imageFormat: .png, width: width, height: height)
-    }
 }
 
 private extension BitmapIcon {

@@ -160,14 +160,12 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private var groundImageController: HereGroundImageController?
         private var rasterLayerController: HereRasterLayerController?
         private var infoBubbleCoordinator: InfoBubbleOverlayCoordinator?
-        private var strategyMarkerController: StrategyMarkerController<
-            MapMarker,
-            AnyMarkerRenderingStrategy<MapMarker>,
-            HereMarkerRenderer
-        >?
-        private var strategyMarkerRenderer: HereMarkerRenderer?
-        private var strategyMarkerSubscriptions: [String: AnyCancellable] = [:]
-        private var strategyMarkerStatesById: [String: MarkerState] = [:]
+        private lazy var strategyManager = StrategyMarkerManager<MapMarker, HereMarkerRenderer>(
+            makeRenderer: { [weak self] _ in
+                guard let mapView = self?.mapView else { fatalError("mapView unavailable") }
+                return HereMarkerRenderer(mapView: mapView)
+            }
+        )
         fileprivate let infoBubbleContainer = PassthroughContainerView()
         private var loadedMapScheme: MapScheme?
         private var latestContent = MapViewContent()
@@ -248,7 +246,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                 self?.onCameraMoveStart?(position)
                 self?.infoBubbleCoordinator?.updateAllLayouts()
                 Task { [weak self] in
-                    await self?.strategyMarkerController?.onCameraChanged(mapCameraPosition: position)
+                    await self?.strategyManager.onCameraChanged(position)
                 }
             }
             controller.setCameraMoveListener { [weak self] position in
@@ -258,7 +256,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                 self?.onCameraMove?(position)
                 self?.infoBubbleCoordinator?.updateAllLayouts()
                 Task { [weak self] in
-                    await self?.strategyMarkerController?.onCameraChanged(mapCameraPosition: position)
+                    await self?.strategyManager.onCameraChanged(position)
                 }
             }
             controller.setCameraMoveEndListener { [weak self] position in
@@ -268,7 +266,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                 self?.onCameraMoveEnd?(position)
                 self?.infoBubbleCoordinator?.updateAllLayouts()
                 Task { [weak self] in
-                    await self?.strategyMarkerController?.onCameraChanged(mapCameraPosition: position)
+                    await self?.strategyManager.onCameraChanged(position)
                 }
             }
             controller.setMapDesignTypeChangeListener { [weak self] design in
@@ -304,87 +302,13 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             infoBubbleCoordinator?.syncInfoBubbles(content.infoBubbles)
             markerController?.tilingOptions = content.markerTilingOptions
             markerController?.syncMarkers(content.markers)
-            updateStrategyRendering(content)
+            strategyManager.update(content: content, initialCamera: lastKnownCameraPosition ?? state.cameraPosition)
             groundImageController?.syncGroundImages(content.groundImages)
             rasterLayerController?.syncRasterLayers(content.rasterLayers)
             polylineController?.syncPolylines(content.polylines)
             polygonController?.syncPolygons(content.polygons)
             circleController?.syncCircles(content.circles)
             infoBubbleCoordinator?.updateAllLayouts()
-        }
-
-        private func updateStrategyRendering(_ content: MapViewContent) {
-            guard let mapView else { return }
-            if let strategy = content.markerRenderingStrategy as? AnyMarkerRenderingStrategy<MapMarker> {
-                if strategyMarkerController == nil ||
-                    strategyMarkerController?.markerManager !== strategy.markerManager {
-                    strategyMarkerRenderer?.unbind()
-                    let renderer = HereMarkerRenderer(mapView: mapView)
-                    strategyMarkerRenderer = renderer
-                    strategyMarkerController = StrategyMarkerController(strategy: strategy, renderer: renderer)
-                    if let position = lastKnownCameraPosition {
-                        Task { [weak self] in
-                            await self?.strategyMarkerController?.onCameraChanged(mapCameraPosition: position)
-                        }
-                    }
-                }
-                syncStrategyMarkers(content.markerRenderingMarkers)
-            } else {
-                strategyMarkerSubscriptions.values.forEach { $0.cancel() }
-                strategyMarkerSubscriptions.removeAll()
-                strategyMarkerStatesById.removeAll()
-                strategyMarkerRenderer?.unbind()
-                strategyMarkerRenderer = nil
-                strategyMarkerController?.destroy()
-                strategyMarkerController = nil
-            }
-        }
-
-        private func syncStrategyMarkers(_ markers: [MarkerState]) {
-            guard let controller = strategyMarkerController else { return }
-            let newIds = Set(markers.map { $0.id })
-            let oldIds = Set(strategyMarkerStatesById.keys)
-            var shouldSyncList = newIds != oldIds
-
-            var newStatesById: [String: MarkerState] = [:]
-            for state in markers {
-                if let existing = strategyMarkerStatesById[state.id], existing !== state {
-                    strategyMarkerSubscriptions[state.id]?.cancel()
-                    strategyMarkerSubscriptions.removeValue(forKey: state.id)
-                    shouldSyncList = true
-                }
-                newStatesById[state.id] = state
-            }
-            strategyMarkerStatesById = newStatesById
-
-            for id in oldIds.subtracting(newIds) {
-                strategyMarkerSubscriptions[id]?.cancel()
-                strategyMarkerSubscriptions.removeValue(forKey: id)
-            }
-
-            if shouldSyncList {
-                Task { [weak self] in
-                    guard self != nil else { return }
-                    await controller.add(data: markers)
-                }
-            }
-
-            for state in markers {
-                subscribeToStrategyMarker(state)
-            }
-        }
-
-        private func subscribeToStrategyMarker(_ state: MarkerState) {
-            guard strategyMarkerSubscriptions[state.id] == nil else { return }
-            strategyMarkerSubscriptions[state.id] = state.asFlow()
-                .dropFirst()
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in
-                    guard let self, self.strategyMarkerStatesById[state.id] != nil else { return }
-                    Task { [weak self] in
-                        await self?.strategyMarkerController?.update(state: state)
-                    }
-                }
         }
 
         func loadInitialScene() {
@@ -436,13 +360,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             rasterLayerController = nil
             infoBubbleCoordinator?.unbind()
             infoBubbleCoordinator = nil
-            strategyMarkerSubscriptions.values.forEach { $0.cancel() }
-            strategyMarkerSubscriptions.removeAll()
-            strategyMarkerStatesById.removeAll()
-            strategyMarkerRenderer?.unbind()
-            strategyMarkerRenderer = nil
-            strategyMarkerController?.destroy()
-            strategyMarkerController = nil
+            strategyManager.clear()
             controller?.setSceneLoadedHandler(nil)
             controller = nil
             mapView = nil
@@ -502,7 +420,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         }
 
         private func handleStrategyMarkerTap(at screenPoint: CGPoint) -> Bool {
-            guard let mapView, let controller = strategyMarkerController else { return false }
+            guard let mapView, let controller = strategyManager.controller else { return false }
             let pixelScale = CGFloat(mapView.pixelScale)
             let minHitPx: CGFloat = 44.0 * pixelScale
             let defaultIcon = DefaultMarkerIcon()

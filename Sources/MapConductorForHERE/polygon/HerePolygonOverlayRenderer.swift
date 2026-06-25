@@ -39,27 +39,21 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<MapPolygo
             || finger.holes != prevFinger.holes
             || finger.geodesic != prevFinger.geodesic
 
-        if shapeChanged || hadHoles != hasHoles {
-            mapView.mapScene.removeMapPolygon(polygon)
-            removeMask(id: current.state.id)
-            return await createPolygon(state: current.state)
+        if shapeChanged, let geometry = makeGeometry(state: current.state) {
+            polygon.geometry = geometry
         }
 
         if hasHoles {
-            masks[current.state.id]?.tileRenderer.update(
-                points: current.state.points,
-                holes: current.state.holes,
-                fillColor: current.state.fillColor,
-                geodesic: current.state.geodesic
-            )
+            ensureMask(state: current.state, mapView: mapView)
+            polygon.fillColor = .clear
             polygon.outlineColor = current.state.strokeColor
             polygon.outlineWidth = current.state.strokeWidth
             polygon.drawOrder = Int32(truncatingIfNeeded: current.state.zIndex)
         } else {
-            if shapeChanged, let geometry = makeGeometry(state: current.state) {
-                polygon.geometry = geometry
+            if hadHoles {
+                removeMask(id: current.state.id)
             }
-            if finger.fillColor != prevFinger.fillColor {
+            if finger.fillColor != prevFinger.fillColor || hadHoles {
                 polygon.fillColor = current.state.fillColor
             }
             if finger.strokeColor != prevFinger.strokeColor {

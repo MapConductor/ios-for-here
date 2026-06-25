@@ -108,6 +108,12 @@ final class HereMapViewController: NSObject,
         hereHolder.mapView.camera.startAnimation(animation, animationDelegate: self)
     }
 
+    func fitBounds(bounds: GeoRectBounds, padding: Int) {
+        guard let geoBox = bounds.toGeoBox() else { return }
+        let cameraUpdate = MapCameraUpdateFactory.lookAt(area: geoBox)
+        hereHolder.mapView.camera.applyUpdate(cameraUpdate)
+    }
+
     func setMapDesignType(_ value: HereMapDesignType) {
         let scene = value.getValue()
         hereHolder.mapView.mapScene.loadScene(mapScheme: scene) { [weak self] error in

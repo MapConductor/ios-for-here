@@ -45,3 +45,13 @@ extension GeoBox {
         )
     }
 }
+
+extension GeoRectBounds {
+    func toGeoBox() -> GeoBox? {
+        guard let sw = southWest, let ne = northEast else { return nil }
+        return GeoBox(
+            southWestCorner: GeoCoordinates(latitude: sw.latitude, longitude: sw.longitude),
+            northEastCorner: GeoCoordinates(latitude: ne.latitude, longitude: ne.longitude)
+        )
+    }
+}

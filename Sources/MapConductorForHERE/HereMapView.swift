@@ -119,6 +119,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
 
         context.coordinator.mapView = mapView
         context.coordinator.bind(state: state, mapView: mapView)
+        context.coordinator.updateScrollGesture(enabled: state.uiSettings.scrollGesture)
         context.coordinator.updateContent(content)
         context.coordinator.loadInitialScene()
 
@@ -127,6 +128,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
 
     func updateUIView(_ uiView: HereMapWrapperView, context: Context) {
         context.coordinator.updateMapDesignIfNeeded()
+        context.coordinator.updateScrollGesture(enabled: state.uiSettings.scrollGesture)
         context.coordinator.updateContent(content)
         context.coordinator.updateInfoBubbleLayouts()
     }
@@ -280,6 +282,15 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             }
             controller.setLongPressHandler { [weak self] state, origin in
                 self?.markerEventController?.handleLongPress(state: state, origin: origin) ?? false
+            }
+        }
+
+        func updateScrollGesture(enabled: Bool) {
+            guard let mapView else { return }
+            if enabled {
+                mapView.gestures.enableDefaultAction(forGesture: .pan)
+            } else {
+                mapView.gestures.disableDefaultAction(forGesture: .pan)
             }
         }
 

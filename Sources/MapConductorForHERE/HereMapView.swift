@@ -237,6 +237,17 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                 }
             )
 
+            // Screen-space marker animation layer: shares the info-bubble
+            // container (inserted below the bubbles) and the same projection.
+            markerController.renderer.animationOverlay = MarkerAnimationOverlayCoordinator(
+                container: infoBubbleContainer,
+                project: { [weak self] point in
+                    guard let mapView = self?.mapView else { return nil }
+                    guard let p2d = mapView.geoToViewCoordinates(geoCoordinates: point.toGeoCoordinates()) else { return nil }
+                    return p2d.toUIKitPoint(pixelScale: mapView.pixelScale)
+                }
+            )
+
             controller.setMapClickListener(listener: onMapClick)
             controller.setMapLongClickListener(listener: onMapLongClick)
             controller.setCameraMoveStartListener { [weak self] position in
@@ -345,6 +356,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             mapView?.gestures.tapDelegate = nil
             mapView?.gestures.panDelegate = nil
             mapView?.gestures.longPressDelegate = nil
+            markerController?.renderer.animationOverlay?.unbind()
+            markerController?.renderer.animationOverlay = nil
             markerController?.unbind()
             markerController = nil
             markerEventController = nil

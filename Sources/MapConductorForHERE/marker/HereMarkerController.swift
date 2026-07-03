@@ -15,14 +15,20 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     private let defaultMarkerIconForTiling: BitmapIcon = DefaultMarkerIcon().toBitmapIcon()
 
     var tilingOptions: MarkerTilingOptions = .Default
-    private let tileServer = TileServerRegistry.get(forceNoStoreCache: true)
+    // Tile invalidation is handled by the cache-key in the URL template, so
+    // long-cache responses are safe and let HERE reuse fetched tiles.
+    private let tileServer = TileServerRegistry.get()
     private var tileRenderer: MarkerTileRenderer<MapMarker>?
     private var tileRouteId: String?
     private var tiledMarkerIds: Set<String> = []
     private var tileDataSource: RasterDataSource?
     private var tileLayer: MapLayer?
     private var tileGeneration: Int64 = 0
-    private static let tileScale: Double = 2.0
+    // HERE stretches one raster tile over 512 logical units on screen, so
+    // rendering at 512 x screenScale px with extraIconScale = screenScale
+    // keeps tiled icons the same on-screen size as regular MapMarkers at 1:1
+    // device pixels (previously hardcoded 2.0, which was only exact on 2x).
+    private static var tileScale: Double { Double(max(1.0, UIScreen.main.scale)) }
 
     init(mapView: MapView?) {
         self.mapView = mapView

@@ -20,6 +20,11 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     var animateStartListener: OnMarkerEventHandler?
     var animateEndListener: OnMarkerEventHandler?
 
+    /// When set, drop/bounce animations run on the screen-space overlay layer
+    /// (projection-independent: correct on tilted/rotated/globe views) and the
+    /// native marker is hidden for the duration via opacity.
+    var animationOverlay: MarkerAnimationOverlayCoordinator?
+
     init(mapView: MapView?) {
         self.mapView = mapView
     }
@@ -124,6 +129,28 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
         duration: CFTimeInterval
     ) async {
         guard let mapView, let marker = entity.marker else { return }
+
+        // Preferred path: animate the marker image on the screen-space overlay.
+        // Projection-independent, so tilt/rotation/globe views stay correct.
+        if let overlay = animationOverlay {
+            marker.coordinates = entity.state.position.toGeoCoordinates()
+            marker.opacity = 0.0
+            animateStartListener?(entity.state)
+            let icon = (entity.state.icon ?? DefaultMarkerIcon()).toBitmapIcon()
+            overlay.start(MarkerAnimationOverlayEntry(
+                id: entity.state.id,
+                state: entity.state,
+                icon: icon,
+                animation: animation,
+                duration: duration,
+                onFinished: { [weak self] in
+                    marker.opacity = 1.0
+                    entity.state.animate(nil)
+                    self?.animateEndListener?(entity.state)
+                }
+            ))
+            return
+        }
 
         if markerAnimationRunners.count >= Self.maxConcurrentAnimations {
             applyImmediatePosition(for: entity, to: marker)

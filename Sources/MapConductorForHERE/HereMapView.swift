@@ -156,6 +156,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private var markerEventController: (any HereMarkerEventControllerProtocol)?
         private var polylineController: HerePolylineController?
         private var polygonController: HerePolygonController?
+        private var hullPolygonController: HerePolygonController?
         private var circleController: HereCircleController?
         private var groundImageController: HereGroundImageController?
         private var rasterLayerController: HereRasterLayerController?
@@ -219,6 +220,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             self.markerEventController = DefaultHereMarkerEventController(markerController: markerController)
             self.polylineController = polylineController
             self.polygonController = polygonController
+            self.hullPolygonController = HerePolygonController(mapView: mapView)
             self.circleController = circleController
             self.groundImageController = groundImageController
             self.rasterLayerController = rasterLayerController
@@ -309,6 +311,12 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             rasterLayerController?.syncRasterLayers(content.rasterLayers)
             polylineController?.syncPolylines(content.polylines)
             polygonController?.syncPolygons(content.polygons)
+            for handler in content.polygonSyncHandlers {
+                let hullController = hullPolygonController
+                handler.bindPolygonSync { [weak hullController] states in
+                    await hullController?.add(data: states)
+                }
+            }
             circleController?.syncCircles(content.circles)
             infoBubbleCoordinator?.updateAllLayouts()
         }
@@ -428,6 +436,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             polylineController = nil
             polygonController?.unbind()
             polygonController = nil
+            hullPolygonController?.unbind()
+            hullPolygonController = nil
             circleController?.unbind()
             circleController = nil
             groundImageController?.unbind()

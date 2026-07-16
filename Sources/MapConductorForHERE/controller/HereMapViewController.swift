@@ -143,7 +143,10 @@ final class HereMapViewController: NSObject,
     }
 
     func onMapCameraUpdated(_ cameraState: MapCamera.State) {
-        let mapCameraPosition = cameraState.toMapCameraPosition(visibleRegion: visibleRegion())
+        let mapCameraPosition = cameraState.toMapCameraPosition(
+            logicalTiltHint: lastRequestedCameraPosition?.tilt,
+            visibleRegion: visibleRegion()
+        )
         lastCameraPosition = mapCameraPosition
         cameraMoveListener?(mapCameraPosition)
 
@@ -184,7 +187,10 @@ final class HereMapViewController: NSObject,
     func onAnimationStateChanged(state: AnimationState) {
         switch state {
         case .started:
-            if let current = hereHolder.mapView.camera.state.toMapCameraPosition(visibleRegion: visibleRegion()) as MapCameraPosition? {
+            if let current = hereHolder.mapView.camera.state.toMapCameraPosition(
+                logicalTiltHint: lastRequestedCameraPosition?.tilt,
+                visibleRegion: visibleRegion()
+            ) as MapCameraPosition? {
                 cameraMoveStartListener?(current)
             }
         case .completed:
@@ -194,7 +200,12 @@ final class HereMapViewController: NSObject,
             }
         case .cancelled:
             isAnimatingCamera = false
-            cameraMoveEndListener?(hereHolder.mapView.camera.state.toMapCameraPosition(visibleRegion: visibleRegion()))
+            cameraMoveEndListener?(
+                hereHolder.mapView.camera.state.toMapCameraPosition(
+                    logicalTiltHint: lastRequestedCameraPosition?.tilt,
+                    visibleRegion: visibleRegion()
+                )
+            )
         @unknown default:
             isAnimatingCamera = false
         }

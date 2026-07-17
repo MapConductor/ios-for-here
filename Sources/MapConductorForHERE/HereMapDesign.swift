@@ -7,9 +7,11 @@ public typealias HereMapDesignType = any HereMapDesignTypeProtocol
 
 public struct HereMapDesign: HereMapDesignTypeProtocol, Hashable {
     public let id: MapScheme
+    public let attributionRules: [AttributionRule]
 
-    public init(id: MapScheme) {
+    public init(id: MapScheme, attributionRules: [AttributionRule] = []) {
         self.id = id
+        self.attributionRules = attributionRules
     }
 
     public func getValue() -> MapScheme {

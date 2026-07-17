@@ -6,6 +6,7 @@ import UIKit
 
 public struct HereMapView: View {
     @ObservedObject private var state: HereMapViewState
+    private let projection: MapConductorCore.MapProjection
 
     private let onMapLoaded: OnMapLoadedHandler<HereMapViewState>?
     private let onMapClick: OnMapEventHandler?
@@ -18,6 +19,7 @@ public struct HereMapView: View {
 
     public init(
         state: HereMapViewState,
+        projection: MapConductorCore.MapProjection = .globe,
         onMapLoaded: OnMapLoadedHandler<HereMapViewState>? = nil,
         onMapClick: OnMapEventHandler? = nil,
         onMapLongClick: OnMapEventHandler? = nil,
@@ -28,6 +30,7 @@ public struct HereMapView: View {
         @MapViewContentBuilder content: @escaping () -> MapViewContent = { MapViewContent() }
     ) {
         self.state = state
+        self.projection = projection
         self.onMapLoaded = onMapLoaded
         self.onMapClick = onMapClick
         self.onMapLongClick = onMapLongClick
@@ -43,6 +46,7 @@ public struct HereMapView: View {
         return ZStack {
             HereMapViewRepresentable(
                 state: state,
+                projection: projection,
                 onMapLoaded: onMapLoaded,
                 onMapClick: onMapClick,
                 onMapLongClick: onMapLongClick,
@@ -55,6 +59,11 @@ public struct HereMapView: View {
             ForEach(0..<mapContent.views.count, id: \.self) { index in
                 mapContent.views[index]
             }
+            MapAttributionOverlay(
+                designRules: state.mapDesignType.attributionRules,
+                rasterLayers: mapContent.rasterLayers,
+                camera: state.cameraPosition
+            )
         }
     }
 }
@@ -84,6 +93,7 @@ private final class HereMapWrapperView: UIView {
 
 private struct HereMapViewRepresentable: UIViewRepresentable {
     @ObservedObject var state: HereMapViewState
+    let projection: MapConductorCore.MapProjection
 
     let onMapLoaded: OnMapLoadedHandler<HereMapViewState>?
     let onMapClick: OnMapEventHandler?
@@ -111,7 +121,10 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             Coordinator.runOnce(sdkInitialize)
         }
 
-        let mapView = MapView(frame: .zero)
+        let options = MapViewOptions(
+            projection: projection == .globe ? .globe : .webMercator
+        )
+        let mapView = MapView(frame: .zero, options: options)
         let wrapper = HereMapWrapperView(
             mapView: mapView,
             overlayContainer: context.coordinator.infoBubbleContainer

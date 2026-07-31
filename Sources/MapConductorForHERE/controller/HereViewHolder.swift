@@ -3,27 +3,27 @@ import heresdk
 import MapConductorCore
 
 @MainActor
-final class HereViewHolder: @preconcurrency MapViewHolderProtocol {
-    typealias ActualMapView = MapView
-    typealias ActualMap = MapScene
+public final class HereViewHolder: @preconcurrency MapViewHolderProtocol {
+    public typealias ActualMapView = MapView
+    public typealias ActualMap = MapScene
 
-    let mapView: MapView
-    var map: MapScene { mapView.mapScene }
+    public let mapView: MapView
+    public var map: MapScene { mapView.mapScene }
 
     init(mapView: MapView) {
         self.mapView = mapView
     }
 
-    func toScreenOffset(position: GeoPointProtocol) -> CGPoint? {
+    public func toScreenOffset(position: GeoPointProtocol) -> CGPoint? {
         guard let point = mapView.geoToViewCoordinates(geoCoordinates: position.toGeoCoordinates()) else { return nil }
         return point.toUIKitPoint(pixelScale: mapView.pixelScale)
     }
 
-    func fromScreenOffset(offset: CGPoint) async -> GeoPoint? {
+    public func fromScreenOffset(offset: CGPoint) async -> GeoPoint? {
         fromScreenOffsetSync(offset: offset)
     }
 
-    func fromScreenOffsetSync(offset: CGPoint) -> GeoPoint? {
+    public func fromScreenOffsetSync(offset: CGPoint) -> GeoPoint? {
         let point = Point2D.fromUIKitPoint(offset, pixelScale: mapView.pixelScale)
         return mapView.viewToGeoCoordinates(viewCoordinates: point)?.toGeoPoint()
     }

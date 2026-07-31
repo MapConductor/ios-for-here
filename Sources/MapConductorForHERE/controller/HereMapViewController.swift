@@ -14,6 +14,7 @@ final class HereMapViewController: NSObject,
     @preconcurrency LongPressDelegate,
     @preconcurrency AnimationDelegate {
     let holder: AnyMapViewHolder
+    let typedHolder: HereViewHolder
     let coroutine = CoroutineScope()
 
     private let hereHolder: HereViewHolder
@@ -40,6 +41,7 @@ final class HereMapViewController: NSObject,
     init(mapView: MapView) {
         let hereHolder = HereViewHolder(mapView: mapView)
         self.hereHolder = hereHolder
+        self.typedHolder = hereHolder
         self.holder = AnyMapViewHolder(hereHolder)
         super.init()
         setupListeners()

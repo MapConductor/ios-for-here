@@ -10,7 +10,8 @@ public final class HereMapViewState: MapViewState<HereMapDesignType> {
     @Published private var _uiSettings: MapUISettings
 
     private var controller: (any MapViewControllerProtocol)?
-    private var mapViewHolder: AnyMapViewHolder?
+    /// Provider-typed holder: `mapView` is `MapView`, `map` is `MapScene`, no cast needed.
+    public private(set) var mapViewHolder: HereViewHolder?
 
     public override var id: String { stateId }
     public override var cameraPosition: MapCameraPosition { _cameraPosition }
@@ -77,7 +78,7 @@ public final class HereMapViewState: MapViewState<HereMapDesignType> {
     }
 
     public override func getMapViewHolder() -> AnyMapViewHolder? {
-        mapViewHolder
+        mapViewHolder.map { AnyMapViewHolder($0) }
     }
 
     func setController(_ controller: (any MapViewControllerProtocol)?) {
@@ -87,7 +88,7 @@ public final class HereMapViewState: MapViewState<HereMapDesignType> {
         }
     }
 
-    func setMapViewHolder(_ holder: AnyMapViewHolder?) {
+    func setMapViewHolder(_ holder: HereViewHolder?) {
         mapViewHolder = holder
     }
 

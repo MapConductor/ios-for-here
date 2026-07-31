@@ -8,13 +8,7 @@ public struct HereMapView: View {
     @ObservedObject private var state: HereMapViewState
     private let projection: MapConductorCore.MapProjection
 
-    private let onMapLoaded: OnMapLoadedHandler<HereMapViewState>?
-    private let onMapClick: OnMapEventHandler?
-    private let onMapLongClick: OnMapEventHandler?
-    private let onCameraMoveStart: OnCameraMoveHandler?
-    private let onCameraMove: OnCameraMoveHandler?
-    private let onCameraMoveEnd: OnCameraMoveHandler?
-    private let sdkInitialize: (() -> Void)?
+    private let handlers: MapViewHandlers<HereMapViewState>
     private let content: () -> MapViewContent
 
     public init(
@@ -31,38 +25,30 @@ public struct HereMapView: View {
     ) {
         self.state = state
         self.projection = projection
-        self.onMapLoaded = onMapLoaded
-        self.onMapClick = onMapClick
-        self.onMapLongClick = onMapLongClick
-        self.onCameraMoveStart = onCameraMoveStart
-        self.onCameraMove = onCameraMove
-        self.onCameraMoveEnd = onCameraMoveEnd
-        self.sdkInitialize = sdkInitialize
+        self.handlers = MapViewHandlers(
+            onMapLoaded: onMapLoaded,
+            onMapClick: onMapClick,
+            onMapLongClick: onMapLongClick,
+            onCameraMoveStart: onCameraMoveStart,
+            onCameraMove: onCameraMove,
+            onCameraMoveEnd: onCameraMoveEnd,
+            sdkInitialize: sdkInitialize
+        )
         self.content = content
     }
 
     public var body: some View {
         let mapContent = content()
-        return ZStack {
+        return MapViewBase(
+            attributionRules: state.mapDesignType.attributionRules,
+            camera: state.cameraPosition,
+            content: mapContent
+        ) {
             HereMapViewRepresentable(
                 state: state,
                 projection: projection,
-                onMapLoaded: onMapLoaded,
-                onMapClick: onMapClick,
-                onMapLongClick: onMapLongClick,
-                onCameraMoveStart: onCameraMoveStart,
-                onCameraMove: onCameraMove,
-                onCameraMoveEnd: onCameraMoveEnd,
-                sdkInitialize: sdkInitialize,
+                handlers: handlers,
                 content: mapContent
-            )
-            ForEach(0..<mapContent.views.count, id: \.self) { index in
-                mapContent.views[index]
-            }
-            MapAttributionOverlay(
-                designRules: state.mapDesignType.attributionRules,
-                rasterLayers: mapContent.rasterLayers,
-                camera: state.cameraPosition
             )
         }
     }
@@ -94,30 +80,15 @@ private final class HereMapWrapperView: UIView {
 private struct HereMapViewRepresentable: UIViewRepresentable {
     @ObservedObject var state: HereMapViewState
     let projection: MapConductorCore.MapProjection
-
-    let onMapLoaded: OnMapLoadedHandler<HereMapViewState>?
-    let onMapClick: OnMapEventHandler?
-    let onMapLongClick: OnMapEventHandler?
-    let onCameraMoveStart: OnCameraMoveHandler?
-    let onCameraMove: OnCameraMoveHandler?
-    let onCameraMoveEnd: OnCameraMoveHandler?
-    let sdkInitialize: (() -> Void)?
+    let handlers: MapViewHandlers<HereMapViewState>
     let content: MapViewContent
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
-            state: state,
-            onMapLoaded: onMapLoaded,
-            onMapClick: onMapClick,
-            onMapLongClick: onMapLongClick,
-            onCameraMoveStart: onCameraMoveStart,
-            onCameraMove: onCameraMove,
-            onCameraMoveEnd: onCameraMoveEnd
-        )
+        Coordinator(state: state, handlers: handlers)
     }
 
     func makeUIView(context: Context) -> HereMapWrapperView {
-        if let sdkInitialize {
+        if let sdkInitialize = handlers.sdkInitialize {
             Coordinator.runOnce(sdkInitialize)
         }
 
@@ -152,17 +123,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject {
-        private static var hasInitializedSdk = false
-
-        private let state: HereMapViewState
-        private let onMapLoaded: OnMapLoadedHandler<HereMapViewState>?
-        private let onMapClick: OnMapEventHandler?
-        private let onMapLongClick: OnMapEventHandler?
-        private let onCameraMoveStart: OnCameraMoveHandler?
-        private let onCameraMove: OnCameraMoveHandler?
-        private let onCameraMoveEnd: OnCameraMoveHandler?
-
+    final class Coordinator: MapViewCoordinatorBase<HereMapViewState> {
         weak var mapView: MapView?
         private var controller: HereMapViewController?
         private var markerController: HereMarkerController?
@@ -173,6 +134,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private var circleController: HereCircleController?
         private var groundImageController: HereGroundImageController?
         private var rasterLayerController: HereRasterLayerController?
+        private var overlayScope: MapOverlayScope?
         private var infoBubbleCoordinator: InfoBubbleOverlayCoordinator?
         private var strategyMarkerController: StrategyMarkerController<
             MapMarker,
@@ -182,37 +144,11 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private var strategyMarkerRenderer: HereMarkerRenderer?
         private var strategyMarkerSubscriptions: [String: AnyCancellable] = [:]
         private var strategyMarkerStatesById: [String: MarkerState] = [:]
-        fileprivate let infoBubbleContainer = PassthroughContainerView()
         private var loadedMapScheme: MapScheme?
         private var latestContent = MapViewContent()
         private var isSceneLoaded = false
         private var needsOverlayResetOnNextSceneLoaded = false
-        private var didCallMapLoaded = false
         private var lastKnownCameraPosition: MapCameraPosition?
-
-        init(
-            state: HereMapViewState,
-            onMapLoaded: OnMapLoadedHandler<HereMapViewState>?,
-            onMapClick: OnMapEventHandler?,
-            onMapLongClick: OnMapEventHandler?,
-            onCameraMoveStart: OnCameraMoveHandler?,
-            onCameraMove: OnCameraMoveHandler?,
-            onCameraMoveEnd: OnCameraMoveHandler?
-        ) {
-            self.state = state
-            self.onMapLoaded = onMapLoaded
-            self.onMapClick = onMapClick
-            self.onMapLongClick = onMapLongClick
-            self.onCameraMoveStart = onCameraMoveStart
-            self.onCameraMove = onCameraMove
-            self.onCameraMoveEnd = onCameraMoveEnd
-        }
-
-        static func runOnce(_ initializer: () -> Void) {
-            if hasInitializedSdk { return }
-            hasInitializedSdk = true
-            initializer()
-        }
 
         func bind(state: HereMapViewState, mapView: MapView) {
             infoBubbleContainer.backgroundColor = .clear
@@ -221,7 +157,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             let controller = HereMapViewController(mapView: mapView)
             self.controller = controller
             state.setController(controller)
-            state.setMapViewHolder(controller.holder)
+            state.setMapViewHolder(controller.typedHolder)
 
             let markerController = HereMarkerController(mapView: mapView)
             let polylineController = HerePolylineController(mapView: mapView)
@@ -237,6 +173,17 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             self.circleController = circleController
             self.groundImageController = groundImageController
             self.rasterLayerController = rasterLayerController
+
+            // Route the simple overlays through the shared collector so each
+            // controller subscribes to one source of truth instead of the map
+            // host re-diffing arrays every render.
+            let overlayScope = MapOverlayScope()
+            self.overlayScope = overlayScope
+            bindOverlayCollector(overlayScope.circleCollector, to: circleController)
+            bindOverlayCollector(overlayScope.polylineCollector, to: polylineController)
+            bindOverlayCollector(overlayScope.polygonCollector, to: polygonController)
+            bindOverlayCollector(overlayScope.rasterLayerCollector, to: rasterLayerController)
+            bindOverlayCollector(overlayScope.groundImageCollector, to: groundImageController)
 
             self.infoBubbleCoordinator = InfoBubbleOverlayCoordinator(
                 container: infoBubbleContainer,
@@ -320,17 +267,17 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             markerController?.tilingOptions = content.markerTilingOptions
             markerController?.syncMarkers(content.markers)
             updateStrategyRendering(content)
-            groundImageController?.syncGroundImages(content.groundImages)
-            rasterLayerController?.syncRasterLayers(content.rasterLayers)
-            polylineController?.syncPolylines(content.polylines)
-            polygonController?.syncPolygons(content.polygons)
+            overlayScope?.groundImageCollector.sync(content.groundImages.map { $0.state })
+            overlayScope?.rasterLayerCollector.sync(content.rasterLayers.map { $0.state })
+            overlayScope?.polylineCollector.sync(content.polylines.map { $0.state })
+            overlayScope?.polygonCollector.sync(content.polygons.map { $0.state })
             for handler in content.polygonSyncHandlers {
                 let hullController = hullPolygonController
                 handler.bindPolygonSync { [weak hullController] states in
                     await hullController?.add(data: states)
                 }
             }
-            circleController?.syncCircles(content.circles)
+            overlayScope?.circleCollector.sync(content.circles.map { $0.state })
             infoBubbleCoordinator?.updateAllLayouts()
         }
 
@@ -457,6 +404,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             groundImageController = nil
             rasterLayerController?.unbind()
             rasterLayerController = nil
+            overlayScope?.clear()
+            overlayScope = nil
             infoBubbleCoordinator?.unbind()
             infoBubbleCoordinator = nil
             strategyMarkerSubscriptions.values.forEach { $0.cancel() }
@@ -493,6 +442,11 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                     await self.circleController?.clear()
                     await self.groundImageController?.clear()
                     await self.rasterLayerController?.clear()
+                    // The clears above bypass the overlay collectors, which still
+                    // hold their membership. Reset them so the following
+                    // syncContent re-adds the overlays instead of seeing "no
+                    // change" and skipping the repopulate after a scene reload.
+                    self.overlayScope?.clear()
                     self.syncContent(self.latestContent)
                 }
             } else {
@@ -552,10 +506,10 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         }
 
         private func notifyMapLoadedIfNeeded() {
-            guard !didCallMapLoaded else { return }
-            didCallMapLoaded = true
-            controller?.notifyMapInitialized()
-            onMapLoaded?(state)
+            performMapLoadedOnce {
+                controller?.notifyMapInitialized()
+                onMapLoaded?(state)
+            }
         }
     }
 }

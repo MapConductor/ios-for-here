@@ -32,7 +32,9 @@ final class HereCircleOverlayRenderer: AbstractCircleOverlayRenderer<MapPolygon>
         let finger = current.fingerPrint
         let prevFinger = prev.fingerPrint
 
-        if finger.center != prevFinger.center || finger.radiusMeters != prevFinger.radiusMeters {
+        if finger.center != prevFinger.center
+            || finger.radiusMeters != prevFinger.radiusMeters
+            || finger.geodesic != prevFinger.geodesic {
             circle.geometry = makeGeometry(state: current.state)
         }
         if finger.fillColor != prevFinger.fillColor {
@@ -61,11 +63,25 @@ final class HereCircleOverlayRenderer: AbstractCircleOverlayRenderer<MapPolygon>
     }
 
     private func makeGeometry(state: CircleState) -> GeoPolygon {
-        GeoPolygon(
+        let nativeGeodesicPolygon = GeoPolygon(
             geoCircle: GeoCircle(
                 center: state.center.toGeoCoordinates(),
                 radiusInMeters: state.radiusMeters
             )
         )
+        if state.geodesic {
+            // Native geodesic circle.
+            return nativeGeodesicPolygon
+        }
+        // 非 geodesic はコア共通の circleToRing（局所平面近似・unwrap 座標）でリングを
+        // 生成し、HERE の座標範囲に収まるよう正規化する（android-for-here と同一仕様）。
+        let vertices = closeRing(
+            circleToRing(
+                center: state.center,
+                radiusMeters: state.radiusMeters,
+                geodesic: false
+            ).map { $0.normalize() }
+        ).map { $0.toGeoCoordinates() }
+        return (try? GeoPolygon(vertices: vertices)) ?? nativeGeodesicPolygon
     }
 }

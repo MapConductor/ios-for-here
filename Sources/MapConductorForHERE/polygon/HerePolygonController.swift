@@ -4,12 +4,12 @@ import heresdk
 import MapConductorCore
 
 @MainActor
-final class HerePolygonController: PolygonController<MapPolygon, HerePolygonOverlayRenderer> {
+final class HerePolygonController: PolygonController<HereActualPolygon, HerePolygonOverlayRenderer> {
     private var polygonStatesById: [String: PolygonState] = [:]
     private var polygonSubscriptions: [String: AnyCancellable] = [:]
 
     init(mapView: MapView?) {
-        let manager = PolygonManager<MapPolygon>()
+        let manager = PolygonManager<HereActualPolygon>()
         let renderer = HerePolygonOverlayRenderer(mapView: mapView)
         super.init(polygonManager: manager, renderer: renderer)
     }

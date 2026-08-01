@@ -20,6 +20,11 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     var animateStartListener: OnMarkerEventHandler?
     var animateEndListener: OnMarkerEventHandler?
 
+    /// When set, drop/bounce animations run on the screen-space overlay layer
+    /// (projection-independent: correct on tilted/rotated/globe views); the
+    /// native marker stays hidden (opacity 0) for the duration.
+    var animationOverlay: MarkerAnimationOverlayCoordinator?
+
     init(mapView: MapView?) {
         self.mapView = mapView
     }
@@ -69,6 +74,31 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     func onAnimate(entity: MarkerEntity<MapMarker>) async {
         guard markerAnimationRunners[entity.state.id] == nil else { return }
         guard let animation = entity.state.getAnimation() else { return }
+
+        // Preferred path: animate the marker image on the screen-space overlay.
+        // Projection-independent, so tilt/rotation/globe views stay correct.
+        // The native marker was added with opacity 0 (pending animation);
+        // reveal it at the target when the overlay finishes.
+        if let overlay = animationOverlay, let marker = entity.marker {
+            marker.opacity = 0.0
+            animateStartListener?(entity.state)
+            let icon = (entity.state.icon ?? DefaultMarkerIcon()).toBitmapIcon()
+            let target = entity.state.position
+            overlay.start(MarkerAnimationOverlayEntry(
+                id: entity.state.id,
+                state: entity.state,
+                icon: icon,
+                animation: animation,
+                duration: animation == .Bounce ? 2.0 : 0.3,
+                onFinished: { [weak self] in
+                    marker.coordinates = target.toGeoCoordinates()
+                    marker.opacity = 1.0
+                    entity.state.animate(nil)
+                    self?.animateEndListener?(entity.state)
+                }
+            ))
+            return
+        }
 
         switch animation {
         case .Drop:

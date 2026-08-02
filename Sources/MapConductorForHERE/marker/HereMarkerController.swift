@@ -73,7 +73,10 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         }
     }
     
-    private func hitTest(at screenPoint: CGPoint) -> MarkerState? {
+    private func hitTest(
+        at screenPoint: CGPoint,
+        where isEligible: (MarkerState) -> Bool
+    ) -> MarkerState? {
         guard let mapView else { return nil }
         let pixelScale = CGFloat(mapView.pixelScale)
         // Minimum hit target: 44pt expressed in physical pixels.
@@ -81,7 +84,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         
         var bestState: MarkerState?
         var bestDistance = CGFloat.infinity
-        for entity in markerManager.allEntities() where entity.state.clickable {
+        for entity in markerManager.allEntities() where isEligible(entity.state) {
             guard let p = mapView.geoToViewCoordinates(geoCoordinates: entity.state.position.toGeoCoordinates()) else { continue }
 
             let icon: any MarkerIconProtocol = entity.state.icon ?? defaultIcon
@@ -106,7 +109,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     }
 
     func handleTap(at screenPoint: CGPoint) -> Bool {
-        let bestState = hitTest(at: screenPoint)
+        let bestState = hitTest(at: screenPoint, where: \.clickable)
         
         guard let bestState else { return false }
         dispatchClick(state: bestState)
@@ -319,7 +322,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     }
 
     private func draggableMarkerState(at origin: Point2D) -> MarkerState? {
-        return hitTest(at: CGPoint(x: origin.x, y: origin.y))
+        hitTest(at: CGPoint(x: origin.x, y: origin.y), where: \.draggable)
     }
 
     private static var retinaAwareTileSize: Int {

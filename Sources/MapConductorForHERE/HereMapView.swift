@@ -254,7 +254,13 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                 self?.handleTap(origin: origin, point: point) ?? false
             }
             controller.setLongPressHandler { [weak self] state, origin in
-                self?.markerEventController?.handleLongPress(state: state, origin: origin) ?? false
+                let handled = self?.markerEventController?.handleLongPress(state: state, origin: origin) ?? false
+                // マーカードラッグ中（handled==true）は InfoBubble をマーカーへ追従させる
+                // （mapbox の onUpdateInfoBubble 相当）。
+                if handled {
+                    self?.infoBubbleCoordinator?.updateAllLayouts()
+                }
+                return handled
             }
         }
 
@@ -301,6 +307,13 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                     let renderer = HereMarkerRenderer(mapView: mapView)
                     strategyMarkerRenderer = renderer
                     strategyMarkerController = StrategyMarkerController(strategy: strategy, renderer: renderer)
+                    // find() の android 同等 screen 空間判定用に geo→screen 投影を注入する。
+                    strategyMarkerController?.markerProjector = { [weak self] geo in
+                        guard let mapView = self?.mapView,
+                              let p2d = mapView.geoToViewCoordinates(geoCoordinates: geo.toGeoCoordinates())
+                        else { return nil }
+                        return p2d.toUIKitPoint(pixelScale: mapView.pixelScale)
+                    }
                     if let position = lastKnownCameraPosition {
                         Task { [weak self] in
                             await self?.strategyMarkerController?.onCameraChanged(mapCameraPosition: position)

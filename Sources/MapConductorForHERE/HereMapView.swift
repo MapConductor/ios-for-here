@@ -9,11 +9,13 @@ public struct HereMapView: View {
     private let projection: MapConductorCore.MapProjection
 
     private let handlers: MapViewHandlers<HereMapViewState>
+    private let cameraRestriction: CameraRestriction?
     private let content: () -> MapViewContent
 
     public init(
         state: HereMapViewState,
         projection: MapConductorCore.MapProjection = .globe,
+        cameraRestriction: CameraRestriction? = nil,
         onMapLoaded: OnMapLoadedHandler<HereMapViewState>? = nil,
         onMapClick: OnMapEventHandler? = nil,
         onMapLongClick: OnMapEventHandler? = nil,
@@ -25,6 +27,7 @@ public struct HereMapView: View {
     ) {
         self.state = state
         self.projection = projection
+        self.cameraRestriction = cameraRestriction
         self.handlers = MapViewHandlers(
             onMapLoaded: onMapLoaded,
             onMapClick: onMapClick,
@@ -38,7 +41,13 @@ public struct HereMapView: View {
     }
 
     public var body: some View {
-        let mapContent = content()
+        // The provider's registry is in scope only while content is being assembled —
+        // the same window in which Compose provides `LocalMapServiceRegistry` around the
+        // content lambda. Bracketing the pass lets a removed plugin be noticed.
+        let support = state.serviceRegistry.get(MarkerRenderingSupportKey.self)
+        support?.beginContentPass()
+        let mapContent = MapServiceRegistryScope.with(state.serviceRegistry) { content() }
+        support?.endContentPass()
         return MapViewBase(
             attributionRules: state.mapDesignType.attributionRules,
             camera: state.cameraPosition,
@@ -46,6 +55,7 @@ public struct HereMapView: View {
         ) {
             HereMapViewRepresentable(
                 state: state,
+                cameraRestriction: cameraRestriction,
                 projection: projection,
                 handlers: handlers,
                 content: mapContent
@@ -79,6 +89,7 @@ private final class HereMapWrapperView: UIView {
 
 private struct HereMapViewRepresentable: UIViewRepresentable {
     @ObservedObject var state: HereMapViewState
+    let cameraRestriction: CameraRestriction?
     let projection: MapConductorCore.MapProjection
     let handlers: MapViewHandlers<HereMapViewState>
     let content: MapViewContent
@@ -103,7 +114,9 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
 
         context.coordinator.mapView = mapView
         context.coordinator.bind(state: state, mapView: mapView)
-        context.coordinator.updateScrollGesture(enabled: state.uiSettings.scrollGesture)
+        // android-for-here の HereMapView.kt と同じ位置で適用する。
+        context.coordinator.applyCameraRestriction(cameraRestriction)
+        context.coordinator.updateGestures(state.uiSettings)
         context.coordinator.updateContent(content)
         context.coordinator.loadInitialScene()
 
@@ -111,8 +124,10 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: HereMapWrapperView, context: Context) {
+        // 制限値が変わったときだけ再適用する。
+        context.coordinator.applyCameraRestriction(cameraRestriction)
         context.coordinator.updateMapDesignIfNeeded()
-        context.coordinator.updateScrollGesture(enabled: state.uiSettings.scrollGesture)
+        context.coordinator.updateGestures(state.uiSettings)
         context.coordinator.updateContent(content)
         context.coordinator.updateInfoBubbleLayouts()
     }
@@ -123,7 +138,12 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: MapViewCoordinatorBase<HereMapViewState> {
+    final class Coordinator: MapViewCoordinatorBase<HereMapViewState>, MarkerRenderingSupport {
+        /// android-sdk の `cameraRestriction?.let { controller.setCameraRestriction(it) }` 相当。
+        func applyCameraRestriction(_ restriction: CameraRestriction?) {
+            applyCameraRestriction(restriction, to: controller)
+        }
+
         weak var mapView: MapView?
         private var controller: HereMapViewController?
         private var markerController: HereMarkerController?
@@ -136,6 +156,12 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private var rasterLayerController: HereRasterLayerController?
         private var overlayScope: MapOverlayScope?
         private var infoBubbleCoordinator: InfoBubbleOverlayCoordinator?
+        /// 接続中の strategy の有無。以前は `MapViewContent.markerRenderingStrategy` を
+        /// 毎回覗いていたが、プラグインが capability 経由で接続する形に反転した。
+        private var hasConnectedStrategy = false
+        private var strategyConnectedThisPass = false
+        private var pendingStrategy: Any?
+
         private var strategyMarkerController: StrategyMarkerController<
             MapMarker,
             AnyMarkerRenderingStrategy<MapMarker>,
@@ -151,6 +177,18 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         private var lastKnownCameraPosition: MapCameraPosition?
 
         func bind(state: HereMapViewState, mapView: MapView) {
+            // Publish marker rendering as a map-scoped capability. Add-on modules resolve it
+            // from the registry; this provider never learns that clustering exists.
+            // 再バインド時に前回の capability が残らないよう、登録前に空にする
+            // （android-sdk の各 *MapView.kt が `registry.clear()` してから put するのと同じ）。
+            state.serviceRegistry.clear()
+            state.serviceRegistry.put(MarkerRenderingSupportKey.self, self)
+            // A strategy can be connected before the map view exists (content is assembled
+            // first); replay it now that the renderer can actually be built.
+            if let pending = pendingStrategy {
+                pendingStrategy = nil
+                applyStrategyRendering(pending)
+            }
             infoBubbleContainer.backgroundColor = .clear
             infoBubbleContainer.isUserInteractionEnabled = true
 
@@ -264,12 +302,36 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             }
         }
 
-        func updateScrollGesture(enabled: Bool) {
+        func updateGestures(_ ui: MapUISettings) {
             guard let mapView else { return }
-            if enabled {
-                mapView.gestures.enableDefaultAction(forGesture: .pan)
-            } else {
-                mapView.gestures.disableDefaultAction(forGesture: .pan)
+            markerController?.scrollGestureEnabled = ui.scrollGesture
+
+            func apply(_ enabled: Bool, _ gesture: heresdk.GestureType) {
+                if enabled {
+                    mapView.gestures.enableDefaultAction(forGesture: gesture)
+                } else {
+                    mapView.gestures.disableDefaultAction(forGesture: gesture)
+                }
+            }
+
+            apply(ui.scrollGesture, .pan)
+            apply(ui.tiltGesture, .twoFingerPan)
+            // HERE bundles pinch-zoom and rotation into a single `.pinchRotate`
+            // recogniser, so neither can be switched off on its own. Only drop it
+            // when both are disabled; the discrete zoom gestures still follow
+            // `zoomGesture` on their own.
+            apply(ui.zoomGesture || ui.rotateGesture, .pinchRotate)
+            apply(ui.zoomGesture, .doubleTap)
+            apply(ui.zoomGesture, .twoFingerTap)
+
+            if ui.zoomGesture != ui.rotateGesture {
+                let stillOn: MapGesture = ui.zoomGesture ? .rotate : .zoom
+                MapUISettingsDiagnostics.warnIfRequested(
+                    false,
+                    gesture: stillOn,
+                    provider: "HERE",
+                    reason: "pinch zoom and rotation share one gesture recogniser, so they can only be disabled together"
+                )
             }
         }
 
@@ -283,7 +345,6 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             infoBubbleCoordinator?.syncInfoBubbles(content.infoBubbles)
             markerController?.tilingOptions = content.markerTilingOptions
             markerController?.syncMarkers(content.markers)
-            updateStrategyRendering(content)
             overlayScope?.groundImageCollector.sync(content.groundImages.map { $0.state })
             overlayScope?.rasterLayerCollector.sync(content.rasterLayers.map { $0.state })
             overlayScope?.polylineCollector.sync(content.polylines.map { $0.state })
@@ -298,9 +359,50 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             infoBubbleCoordinator?.updateAllLayouts()
         }
 
-        private func updateStrategyRendering(_ content: MapViewContent) {
+        // MARK: - MarkerRenderingSupport
+        //
+        // HERE keeps its own renderer rather than using StrategyMarkerManager, so the
+        // coordinator implements the capability directly. The lookup direction matches every
+        // other provider: the plugin resolves this from MapServiceRegistry and calls connect.
+
+        @discardableResult
+        func connect(strategy: Any, markers: [MarkerState]) -> Bool {
+            guard strategy is AnyMarkerRenderingStrategy<MapMarker> else { return false }
+            strategyConnectedThisPass = true
+            hasConnectedStrategy = true
+            guard mapView != nil else {
+                // Content is assembled before bind(state:mapView:) on the first pass.
+                pendingStrategy = strategy
+                return true
+            }
+            applyStrategyRendering(strategy)
+            syncMarkers(markers)
+            return true
+        }
+
+        func syncMarkers(_ markers: [MarkerState]) {
+            syncStrategyMarkers(markers)
+        }
+
+        func disconnect() {
+            pendingStrategy = nil
+            hasConnectedStrategy = false
+            applyStrategyRendering(nil)
+        }
+
+        func beginContentPass() {
+            strategyConnectedThisPass = false
+        }
+
+        func endContentPass() {
+            if !strategyConnectedThisPass, hasConnectedStrategy {
+                disconnect()
+            }
+        }
+
+        private func applyStrategyRendering(_ anyStrategy: Any?) {
             guard let mapView else { return }
-            if let strategy = content.markerRenderingStrategy as? AnyMarkerRenderingStrategy<MapMarker> {
+            if let strategy = anyStrategy as? AnyMarkerRenderingStrategy<MapMarker> {
                 if strategyMarkerController == nil ||
                     strategyMarkerController?.markerManager !== strategy.markerManager {
                     strategyMarkerRenderer?.unbind()
@@ -320,7 +422,6 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                         }
                     }
                 }
-                syncStrategyMarkers(content.markerRenderingMarkers)
             } else {
                 strategyMarkerSubscriptions.values.forEach { $0.cancel() }
                 strategyMarkerSubscriptions.removeAll()
@@ -506,27 +607,13 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
 
         private func handleStrategyMarkerTap(at screenPoint: CGPoint) -> Bool {
             guard let mapView, let controller = strategyMarkerController else { return false }
-            let pixelScale = CGFloat(mapView.pixelScale)
-            let minHitPx: CGFloat = 44.0 * pixelScale
-            let defaultIcon = DefaultMarkerIcon()
-            var bestState: MarkerState?
-            var bestDistance = CGFloat.infinity
-
-            for entity in controller.markerManager.allEntities() where entity.state.clickable {
-                guard let p = mapView.geoToViewCoordinates(geoCoordinates: entity.state.position.toGeoCoordinates()) else { continue }
-                let icon: any MarkerIconProtocol = entity.state.icon ?? defaultIcon
-                let renderedPx = max(icon.iconSize * icon.scale * pixelScale, minHitPx)
-                let left = CGFloat(p.x) - icon.anchor.x * renderedPx
-                let top  = CGFloat(p.y) - icon.anchor.y * renderedPx
-                let hitRect = CGRect(x: left, y: top, width: renderedPx, height: renderedPx)
-                guard hitRect.contains(screenPoint) else { continue }
-                let distance = hypot(screenPoint.x - CGFloat(p.x), screenPoint.y - CGFloat(p.y))
-                if distance < bestDistance {
-                    bestDistance = distance
-                    bestState = entity.state
-                }
-            }
-            guard let state = bestState else { return false }
+            let state = HereMarkerHitTest.find(
+                at: screenPoint,
+                in: mapView,
+                states: controller.markerManager.allEntities().map(\.state).filter(\.clickable),
+                defaultIcon: DefaultMarkerIcon()
+            )
+            guard let state else { return false }
             controller.dispatchClick(state)
             return true
         }

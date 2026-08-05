@@ -73,8 +73,8 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
 
     private func makeGeometry(state: PolylineState) -> GeoPolyline? {
         let geoPoints: [GeoPointProtocol] = state.geodesic
-            ? createInterpolatePoints(state.points)
-            : createLinearInterpolatePoints(state.points)
+            ? WGS84Geodesic.createInterpolatePoints(state.points)
+            : Planar.createInterpolatePoints(state.points)
         guard geoPoints.count >= 2 else { return nil }
         return try? GeoPolyline(vertices: geoPoints.map { $0.toGeoCoordinates() })
     }

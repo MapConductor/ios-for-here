@@ -38,7 +38,7 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
 
     override func createPolygon(state: PolygonState) async -> HereActualPolygon? {
         guard let mapView else { return nil }
-        let resolved = resolveHoles(state)
+        let resolved = await resolveHoles(state)
 
         if resolved.holes.isEmpty {
             removeMask(id: state.id)
@@ -140,11 +140,20 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
 
     // MARK: - Polygon building
 
-    /// 複数の穴が重なっている場合は結合（union）して重複を解消する
-    /// （他プロバイダと同じ `unionHoles`。マスクタイルは union 済みでなくても正しく抜けるが、
-    /// 輪郭線は結合後の外形に沿わせる）。
-    private func resolveHoles(_ state: PolygonState) -> PolygonState {
-        state.holes.count > 1 ? state.unionHoles() : state
+    /// 複数の穴が重なっている場合は結合（union）して重複を解消する。
+    /// 他プロバイダ（ArcGIS/Mapbox/MapLibre）と同じ `unionHoles()` を用いる。
+    ///
+    /// 塗りはラスタマスク側が穴ごとに `.clear` で抜くので重なっても破綻しないが、輪郭は
+    /// 穴リングごとに `MapPolygon` を作るため、結合しないと重なり部分に内側の線が残る。
+    /// コンポーネント層（`Polygon`）のユニオンは state 1 インスタンスにつき 1 回きりで
+    /// 頂点ドラッグ後の `state.holes` 差し替えには追従しないため、android-for-here と同じく
+    /// ジオメトリを組み立てるここでも結合する。
+    ///
+    /// android-for-here が `withContext(Dispatchers.Default)` で逃がしているのと同じく、
+    /// 平面アレンジメント（辺数に対して O(n²)）は MainActor の外で回す。
+    private func resolveHoles(_ state: PolygonState) async -> PolygonState {
+        guard state.holes.count > 1 else { return state }
+        return await state.unionHolesInBackground()
     }
 
     private func buildSimplePolygon(state: PolygonState) -> [MapPolygon] {
@@ -184,7 +193,7 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
     }
 
     private func makeRing(points: [GeoPointProtocol], geodesic: Bool) -> [GeoPointProtocol] {
-        var ring = (geodesic ? createInterpolatePoints(points) : createLinearInterpolatePoints(points))
+        var ring = (geodesic ? WGS84Geodesic.createInterpolatePoints(points) : Planar.createInterpolatePoints(points))
             .map { $0.normalize() }
         if let first = ring.first, let last = ring.last,
            !(GeoPoint.from(position: first) == GeoPoint.from(position: last)) {

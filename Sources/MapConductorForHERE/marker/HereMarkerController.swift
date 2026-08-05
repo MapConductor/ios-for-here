@@ -11,6 +11,10 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
     private var markerStatesById: [String: MarkerState] = [:]
     private var markerSubscriptions: [String: AnyCancellable] = [:]
     private var draggingMarkerId: String?
+    /// Mirrors `uiSettings.scrollGesture`. HERE exposes no getter for gesture
+    /// state, so the view pushes the current value here and drag restore honours
+    /// it instead of unconditionally re-enabling panning.
+    var scrollGestureEnabled: Bool = true
     private let defaultIcon: any MarkerIconProtocol = DefaultMarkerIcon()
     private let defaultMarkerIconForTiling: BitmapIcon = DefaultMarkerIcon().toBitmapIcon()
 
@@ -78,34 +82,12 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         where isEligible: (MarkerState) -> Bool
     ) -> MarkerState? {
         guard let mapView else { return nil }
-        let pixelScale = CGFloat(mapView.pixelScale)
-        // Minimum hit target: 44pt expressed in physical pixels.
-        let minHitPx: CGFloat = 44.0 * pixelScale
-        
-        var bestState: MarkerState?
-        var bestDistance = CGFloat.infinity
-        for entity in markerManager.allEntities() where isEligible(entity.state) {
-            guard let p = mapView.geoToViewCoordinates(geoCoordinates: entity.state.position.toGeoCoordinates()) else { continue }
-
-            let icon: any MarkerIconProtocol = entity.state.icon ?? defaultIcon
-            // Rendered size in physical pixels: iconSize (pts) × scale × pixelScale.
-            // Icons are square canvases; anchor is normalized (0–1).
-            let renderedPx = max(icon.iconSize * icon.scale * pixelScale, minHitPx)
-
-            let left = CGFloat(p.x) - icon.anchor.x * renderedPx
-            let top  = CGFloat(p.y) - icon.anchor.y * renderedPx
-            let hitRect = CGRect(x: left, y: top, width: renderedPx, height: renderedPx)
-
-            guard hitRect.contains(screenPoint) else { continue }
-
-            // Among overlapping markers prefer the one whose anchor is closest to the tap.
-            let distance = hypot(screenPoint.x - CGFloat(p.x), screenPoint.y - CGFloat(p.y))
-            if distance < bestDistance {
-                bestDistance = distance
-                bestState = entity.state
-            }
-        }
-        return bestState
+        return HereMarkerHitTest.find(
+            at: screenPoint,
+            in: mapView,
+            states: markerManager.allEntities().map(\.state).filter(isEligible),
+            defaultIcon: defaultIcon
+        )
     }
 
     func handleTap(at screenPoint: CGPoint) -> Bool {
@@ -283,13 +265,13 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
             }
             dispatchDragEnd(state: state)
             draggingMarkerId = nil
-            mapView.gestures.enableDefaultAction(forGesture: .pan)
+            if scrollGestureEnabled { mapView.gestures.enableDefaultAction(forGesture: .pan) }
             return true
 
         case .cancel:
             let wasDragging = draggingMarkerId != nil
             draggingMarkerId = nil
-            mapView.gestures.enableDefaultAction(forGesture: .pan)
+            if scrollGestureEnabled { mapView.gestures.enableDefaultAction(forGesture: .pan) }
             return wasDragging
 
         @unknown default:

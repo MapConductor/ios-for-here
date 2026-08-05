@@ -32,6 +32,10 @@ final class HereMapViewController: NSObject,
     private var sceneLoadedHandler: HereSceneLoadedHandler?
     private var lastRequestedCameraPosition: MapCameraPosition?
     private var cameraMoveEndTask: Task<Void, Never>?
+
+    /// HERE はネイティブのカメラ範囲制限 API を持たないため、android-for-here と同じく
+    /// カメラ停止時に矩形内へクランプして再適用する方式で制限する。
+    private let cameraRestrictionClamp = CameraRestrictionClamp()
     private var cameraMoveInProgress = false
     private var isAnimatingCamera = false
     private var lastCameraPosition: MapCameraPosition?
@@ -91,6 +95,10 @@ final class HereMapViewController: NSObject,
         longPressHandler = handler
     }
 
+    func setCameraRestriction(_ restriction: CameraRestriction?) {
+        cameraRestrictionClamp.set(restriction)
+    }
+
     func moveCamera(position: MapCameraPosition) {
         lastRequestedCameraPosition = position
         hereHolder.mapView.camera.applyUpdate(position.toMapCameraUpdate())
@@ -112,8 +120,26 @@ final class HereMapViewController: NSObject,
 
     func fitBounds(bounds: GeoRectBounds, padding: Int) {
         guard let geoBox = bounds.toGeoBox() else { return }
-        let cameraUpdate = MapCameraUpdateFactory.lookAt(area: geoBox)
-        hereHolder.mapView.camera.applyUpdate(cameraUpdate)
+        let mapView = hereHolder.mapView
+        // HERE frames a GeoBox into a viewport Rectangle2D. Insetting that rectangle on every side
+        // reserves empty margin, which is what `padding` requests. `viewportSize` is in physical
+        // pixels while the shared `padding` is in points (the point-based unit the other providers
+        // feed to their UIEdgeInsets), so scale by `pixelScale` for cross-provider parity — the same
+        // point<->pixel conversion HereMarkerRenderer already relies on.
+        let scale = mapView.pixelScale
+        let viewport = mapView.viewportSize
+        let width = viewport.width > 0 ? viewport.width : mapView.bounds.width * scale
+        let height = viewport.height > 0 ? viewport.height : mapView.bounds.height * scale
+        let insetPx = max(0.0, Double(padding) * scale)
+        // Never let the padded rectangle collapse to zero/negative area.
+        let horizontalInset = min(insetPx, max(0.0, (width - 1.0) / 2.0))
+        let verticalInset = min(insetPx, max(0.0, (height - 1.0) / 2.0))
+        let viewRectangle = Rectangle2D(
+            origin: Point2D(x: horizontalInset, y: verticalInset),
+            size: Size2D(width: width - 2.0 * horizontalInset, height: height - 2.0 * verticalInset)
+        )
+        let cameraUpdate = MapCameraUpdateFactory.lookAt(area: geoBox, viewRectangle: viewRectangle)
+        mapView.camera.applyUpdate(cameraUpdate)
     }
 
     func setMapDesignType(_ value: HereMapDesignType) {
@@ -163,6 +189,13 @@ final class HereMapViewController: NSObject,
         cameraMoveEndTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: Self.cameraMoveEndIdleNanoseconds)
             guard let self, let lastCameraPosition = self.lastCameraPosition else { return }
+            // 範囲・ズーム制限に違反していれば矩形内へ引き戻す（HERE はネイティブの範囲制限 API が
+            // 無いため）。再適用すると onMapCameraUpdated が再発火し、そこでは補正不要になり
+            // 通常フローへ進む。android-for-here と同一仕様。
+            if let corrected = self.cameraRestrictionClamp.correction(for: lastCameraPosition) {
+                self.moveCamera(position: corrected)
+                return
+            }
             self.cameraMoveInProgress = false
             self.cameraMoveEndListener?(lastCameraPosition)
         }

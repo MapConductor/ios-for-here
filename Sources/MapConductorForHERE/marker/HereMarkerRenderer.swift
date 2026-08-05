@@ -102,9 +102,9 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
 
         switch animation {
         case .Drop:
-            await animateMarker(entity: entity, animation: .Drop, duration: 0.3)
+            await animateMarker(entity: entity, animation: .Drop, duration: Settings.Default.markerDropAnimateInterval)
         case .Bounce:
-            await animateMarker(entity: entity, animation: .Bounce, duration: 2.0)
+            await animateMarker(entity: entity, animation: .Bounce, duration: Settings.Default.markerBounceAnimateInterval)
         }
     }
 

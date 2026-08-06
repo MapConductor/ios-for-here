@@ -179,9 +179,6 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         func bind(state: HereMapViewState, mapView: MapView) {
             // Publish marker rendering as a map-scoped capability. Add-on modules resolve it
             // from the registry; this provider never learns that clustering exists.
-            // 再バインド時に前回の capability が残らないよう、登録前に空にする
-            // （android-sdk の各 *MapView.kt が `registry.clear()` してから put するのと同じ）。
-            state.serviceRegistry.clear()
             state.serviceRegistry.put(MarkerRenderingSupportKey.self, self)
             // A strategy can be connected before the map view exists (content is assembled
             // first); replay it now that the renderer can actually be built.
@@ -195,6 +192,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             let controller = HereMapViewController(mapView: mapView)
             self.controller = controller
             state.setController(controller)
+            // 拡張モジュール（ヒートマップ等）がオーバーレイコントローラを登録できるようにする。
+            state.serviceRegistry.put(OverlayControllerRegistryKey.self, controller.overlayControllers)
             state.setMapViewHolder(controller.typedHolder)
 
             let markerController = HereMarkerController(mapView: mapView)
@@ -508,6 +507,11 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
         }
 
         func unbind() {
+            // 登録した capability を取り下げる。レジストリの持ち主は state で、ビューより長生きするため、
+            // ここで外さないと破棄済みのコントローラを掴んだまま残る。
+            state.serviceRegistry.removeProviderRegistrations()
+            // 登録済みオーバーレイコントローラ（拡張モジュール含む）を破棄する。
+            controller?.destroy()
             state.setController(nil)
             state.setMapViewHolder(nil)
             mapView?.camera.removeDelegates()

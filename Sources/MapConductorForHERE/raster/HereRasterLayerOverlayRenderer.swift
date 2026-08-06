@@ -54,9 +54,10 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
     private func addLayer(state: RasterLayerState) -> HereRasterLayerHandle? {
         guard let mapView else { return nil }
 
-        // opacity < 1 のときはローカルタイルサーバーへプロキシし、取得したタイルへ
-        // アルファを合成する（HERE はレイヤー不透明度をサポートしないため）。
-        let routeId: String? = needsOpacityProxy(state) ? "here-raster-\(buildSafeId(state.id))" : nil
+        // ローカルタイルサーバーへプロキシするかどうか。HERE の `RasterDataSource` は
+        // レイヤー不透明度もリクエストヘッダの差し替えも受け付けないので、どちらかが
+        // 要るときだけ自前で取りに行く経路に切り替える。
+        let routeId: String? = needsProxy(state) ? "here-raster-\(buildSafeId(state.id))" : nil
         if let routeId {
             tileServer.register(routeId: routeId, provider: HereRasterTileProxyProvider(state: state))
         }
@@ -200,8 +201,17 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
         }
     }
 
-    private func needsOpacityProxy(_ state: RasterLayerState) -> Bool {
-        min(max(state.opacity, 0.0), 1.0) < 0.999
+    /// プロキシ経由が必要か。
+    ///
+    /// プロキシは 1 ホップ増えるぶん確実に遅くなるので、必要なときだけ通す。
+    /// `userAgent` が既定値のままなら「利用者が指定した」とは見なさない
+    /// （既定値は空ではないため、これを指定扱いにすると全レイヤがプロキシ経由になる）。
+    private func needsProxy(_ state: RasterLayerState) -> Bool {
+        if min(max(state.opacity, 0.0), 1.0) < 0.999 { return true }
+        if let headers = state.extraHeaders, !headers.isEmpty { return true }
+        let ua = state.userAgent?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        if let ua, !ua.isEmpty, ua != RasterLayerState.defaultUserAgent { return true }
+        return false
     }
 
     private func cacheDirectoryPath() -> String {

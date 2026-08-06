@@ -17,6 +17,11 @@ final class HereMapViewController: NSObject,
     let typedHolder: HereViewHolder
     let coroutine = CoroutineScope()
 
+    /// この地図に紐づくオーバーレイコントローラの登録簿。
+    /// 拡張モジュール（ヒートマップ、マーカークラスタリング等）がここに登録して
+    /// カメラ変更を受け取る。`MapViewControllerProtocol` の要件。
+    let overlayControllers = OverlayControllerRegistry()
+
     private let hereHolder: HereViewHolder
     private var cameraMoveStartListener: OnCameraMoveHandler?
     private var cameraMoveListener: OnCameraMoveHandler?
@@ -197,6 +202,8 @@ final class HereMapViewController: NSObject,
                 return
             }
             self.cameraMoveInProgress = false
+            // 登録済みオーバーレイ（拡張モジュール含む）へ伝播する。
+            self.overlayControllers.dispatchCameraChanged(lastCameraPosition)
             self.cameraMoveEndListener?(lastCameraPosition)
         }
     }
@@ -231,10 +238,17 @@ final class HereMapViewController: NSObject,
         case .completed:
             isAnimatingCamera = false
             if let position = lastRequestedCameraPosition {
+                overlayControllers.dispatchCameraChanged(position)
                 cameraMoveEndListener?(position)
             }
         case .cancelled:
             isAnimatingCamera = false
+            overlayControllers.dispatchCameraChanged(
+                hereHolder.mapView.camera.state.toMapCameraPosition(
+                    logicalTiltHint: lastRequestedCameraPosition?.tilt,
+                    visibleRegion: visibleRegion()
+                )
+            )
             cameraMoveEndListener?(
                 hereHolder.mapView.camera.state.toMapCameraPosition(
                     logicalTiltHint: lastRequestedCameraPosition?.tilt,

@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = "MapConductorForHERE"
-  s.version = "1.0.0"
+  s.version = "1.2.0"
   s.summary = "MapConductor's HERE Maps provider."
   s.license = { :type => "Apache-2.0", :file => "LICENSE" }
   s.author = "MapConductor"

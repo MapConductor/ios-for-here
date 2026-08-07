@@ -143,7 +143,7 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
             let urlProvider = makeUrlProvider(
                 state: state,
                 routeId: routeId,
-                tileSize: RasterSource.defaultTileSize
+                tileSize: RasterLayerSource.defaultTileSize
             )
             guard let urlProvider else { return nil }
             return TileSpec(
@@ -250,7 +250,7 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
 /// `renderTile` はタイルサーバーの背景キューから呼ばれるため `@MainActor` にせず、
 /// 生成時に必要な値（source / opacity / userAgent / extraHeaders）を不変で取り込む。
 private final class HereRasterTileProxyProvider: TileProvider {
-    private let source: RasterSource
+    private let source: RasterLayerSource
     private let opacity: Double
     private let userAgent: String?
     private let extraHeaders: [String: String]?

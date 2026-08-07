@@ -87,12 +87,12 @@ Polygon (holes supported), Circle, GroundImage, RasterLayer and InfoBubble.
 ## Implementation notes
 
 - **Polygon holes**: the HERE SDK does not reliably draw `MapPolygon` inner boundaries (the
-  same conclusion `android-for-here` reached), so the fill of a holed polygon is rasterized
-  by the shared core `PolygonRasterTileRenderer` and supplied to HERE as a `RasterTileSource`
-  on a custom raster layer. Unlike the Android module's local HTTP tile server with URL
-  cache-busting, a shape change bumps a data version via
-  `TileSourceDelegate.onDataVersionChanged`, so neither the layer nor the data source is
-  recreated — no leaks and no flicker.
+  same conclusion `android-for-here` reached), and a keyhole-bridged ring self-overlaps so a
+  semi-transparent fill double-blends over the hole. The fill is therefore split by the shared
+  core `splitPolygonWithHolesIntoSimpleRings` into hole-free simple rings, one `MapPolygon`
+  each; the pieces are disjoint, so no double-blending. Outlines (outer ring and each hole) are
+  drawn separately as stroke-only polygons, because a piece boundary contains the split bridges.
+  Both platforms use this same approach. It replaced an earlier raster-tile mask.
 - **Marker tiling**: static markers are batched into raster tiles once the marker count
   passes `MarkerTilingOptions.minMarkerCount`. Draggable and animating markers stay as
   native markers so they remain interactive.

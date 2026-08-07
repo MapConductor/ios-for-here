@@ -181,7 +181,10 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
                 marker: nil,
                 state: state,
                 visible: prevEntity.visible,
-                isRendered: true
+                isRendered: true,
+                // tiling を立てないと MarkerTileRenderer の絞り込みから漏れ、
+                // タイル昇格したのにタイルへ描かれないマーカーになる。
+                tiling: true
             ))
             await renderer.onPostProcess()
             tileRenderer?.invalidate()

@@ -214,6 +214,15 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             // Route the simple overlays through the shared collector so each
             // controller subscribes to one source of truth instead of the map
             // host re-diffing arrays every render.
+            // クリックカスケードとスロット解決がここから kind で引く。
+            // **登録を忘れるとタップに反応しなくなる。**
+            controller.registerOverlayController(markerController)
+            controller.registerOverlayController(circleController)
+            controller.registerOverlayController(polylineController)
+            controller.registerOverlayController(polygonController)
+            controller.registerOverlayController(groundImageController)
+            controller.registerOverlayController(rasterLayerController)
+
             let overlayScope = MapOverlayScope()
             self.overlayScope = overlayScope
             bindOverlayCollector(overlayScope.circleCollector, to: circleController)
@@ -596,19 +605,10 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
             if handleStrategyMarkerTap(at: screenPoint) {
                 return true
             }
-            if circleController?.handleTap(at: point) == true {
-                return true
-            }
-            if polylineController?.handleTap(at: point) == true {
-                return true
-            }
-            if polygonController?.handleTap(at: point) == true {
-                return true
-            }
-            if groundImageController?.handleTap(at: point) == true {
-                return true
-            }
-            return false
+            // circle → groundImage → polyline → polygon の一本道。
+            // 順序と先勝ちはコアの dispatchOverlayTap が持つ。
+            // 移行前はここで circle → polyline → polygon → groundImage の独自順だった。
+            return controller?.dispatchOverlayTap(position: point) == true
         }
 
         private func handleStrategyMarkerTap(at screenPoint: CGPoint) -> Bool {

@@ -229,6 +229,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                     guard let p2d = mapView.geoToViewCoordinates(geoCoordinates: point.toGeoCoordinates()) else { return nil }
                     return p2d.toUIKitPoint(pixelScale: mapView.pixelScale)
                 },
+                projectionGate: screenProjectionGate(feature: "InfoBubble"),
                 resolveMarkerStateForIcon: { [weak markerController] id, bubbleMarker in
                     markerController?.markerManager.getEntity(id)?.state ?? bubbleMarker
                 },
@@ -246,7 +247,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
                     guard let mapView = self?.mapView else { return nil }
                     guard let p2d = mapView.geoToViewCoordinates(geoCoordinates: point.toGeoCoordinates()) else { return nil }
                     return p2d.toUIKitPoint(pixelScale: mapView.pixelScale)
-                }
+                },
+                projectionGate: screenProjectionGate(feature: "marker animation overlay")
             )
 
             controller.setMapClickListener(listener: onMapClick)

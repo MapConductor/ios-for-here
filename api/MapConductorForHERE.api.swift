@@ -90,7 +90,6 @@ final public class HereZoomAltitudeConverter : MapConductorCore.ZoomAltitudeConv
     get
   }
   @_Concurrency.MainActor final public func toScreenOffset(position: any MapConductorCore.GeoPointProtocol) -> CoreFoundation.CGPoint?
-  @_Concurrency.MainActor final public func fromScreenOffset(offset: CoreFoundation.CGPoint) async -> MapConductorCore.GeoPoint?
   @_Concurrency.MainActor final public func fromScreenOffsetSync(offset: CoreFoundation.CGPoint) -> MapConductorCore.GeoPoint?
   @objc deinit
 }

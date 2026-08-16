@@ -1,4 +1,4 @@
-# MapConductor for HERE
+# HERE SDK for MapConductor iOS
 
 HERE Maps provider for the MapConductor unified mapping API, built on the HERE SDK
 (Explore Edition) for iOS.
@@ -12,7 +12,7 @@ Even using the wrapper API, you can still access the native HERE view if you wan
 
 ## Setup
 
-https://docs-ios.mapconductor.com/setup/here-maps/
+https://mapconductor.com/setup/ios/here/
 
 The HERE SDK is a binary `xcframework` wired in as a `.binaryTarget` (see `Package.swift`);
 it is not fetched from a public package registry. Initialize it once, before any map view
@@ -58,19 +58,48 @@ struct ContentView: View {
 }
 ```
 
-## Supported overlays
+## Components
 
-Marker (custom icons, click, drag, and tiled rendering for large marker sets), Polyline,
-Polygon (holes supported), Circle, GroundImage, RasterLayer and InfoBubble.
+### HereMapView [[docs]](https://mapconductor.com/mapview/)
 
-## Available designs
+The SwiftUI map view is controlled through `HereMapViewState`.
+
+### Marker [[docs]](https://mapconductor.com/markers/)
+
+Supports custom icons, click events, dragging, and tiled rendering for large marker sets.
+
+### InfoBubble [[docs]](https://mapconductor.com/info-bubble/)
+
+Displays SwiftUI content anchored to a selected marker.
+
+### Circle [[docs]](https://mapconductor.com/circle/)
+
+Renders geodesic circles through the unified MapConductor API.
+
+### Polyline [[docs]](https://mapconductor.com/polyline/)
+
+Renders lines and forwards click events through the common event cascade.
+
+### Polygon [[docs]](https://mapconductor.com/polygon/)
+
+Supports polygons with inner holes.
+
+### Polygon Hole
+
+Polygon holes are split into non-overlapping simple rings for reliable HERE rendering.
+
+### GroundImage [[docs]](https://mapconductor.com/ground-image/)
+
+Places an image within geographic bounds. Raster tile layers are also supported.
+
+### Available designs
 
 `HereMapDesign` maps onto HERE's map schemes, mostly in day/night pairs:
 `NormalDay`, `NormalNight`, `Satellite`, `HybridDay`, `HybridNight`, `LiteDay`,
 `LiteNight`, `LiteHybridDay`, `LiteHybridNight`, `LogisticsDay`, `LogisticsNight`,
 `LogisticsHybridDay`, `LogisticsHybridNight`, `RoadNetworkDay`, `RoadNetworkNight`.
 
-## Files
+### Files
 
 | File | Role |
 | --- | --- |
@@ -84,7 +113,7 @@ Polygon (holes supported), Circle, GroundImage, RasterLayer and InfoBubble.
 | `groundimage/` / `raster/` | Ground images and raster tile layers |
 | `ZoomAltitudeConverter.swift` | Unified zoom ↔ HERE-native conversion |
 
-## Implementation notes
+### Implementation notes
 
 - **Polygon holes**: the HERE SDK does not reliably draw `MapPolygon` inner boundaries (the
   same conclusion `android-for-here` reached), and a keyhole-bridged ring self-overlaps so a

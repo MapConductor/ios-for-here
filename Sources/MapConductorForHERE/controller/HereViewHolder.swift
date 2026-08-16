@@ -19,10 +19,6 @@ public final class HereViewHolder: @preconcurrency MapViewHolderProtocol {
         return point.toUIKitPoint(pixelScale: mapView.pixelScale)
     }
 
-    public func fromScreenOffset(offset: CGPoint) async -> GeoPoint? {
-        fromScreenOffsetSync(offset: offset)
-    }
-
     public func fromScreenOffsetSync(offset: CGPoint) -> GeoPoint? {
         let point = Point2D.fromUIKitPoint(offset, pixelScale: mapView.pixelScale)
         return mapView.viewToGeoCoordinates(viewCoordinates: point)?.toGeoPoint()

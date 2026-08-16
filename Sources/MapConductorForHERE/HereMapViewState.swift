@@ -2,25 +2,22 @@ import Combine
 import Foundation
 import MapConductorCore
 
+/// HERE の state。
+///
+/// カメラの保持と委譲、`uiSettings`、`id` はコアの ``MapViewState`` が持つ。
+/// ここに残るのは **HERE 固有のもの**だけ。`mapDesignType` の setter が
+/// メインアクターでシーンを差し替えに行くところが他プロバイダと違う。
 public final class HereMapViewState: MapViewState<HereMapDesignType> {
-    private let stateId: String
-
-    @Published private var _cameraPosition: MapCameraPosition
     @Published private var _mapDesignType: HereMapDesignType
-    @Published private var _uiSettings: MapUISettings
 
-    private var controller: (any MapViewControllerProtocol)?
     /// Provider-typed holder: `mapView` is `MapView`, `map` is `MapScene`, no cast needed.
     public private(set) var mapViewHolder: HereViewHolder?
-
-    public override var id: String { stateId }
-    public override var cameraPosition: MapCameraPosition { _cameraPosition }
 
     public override var mapDesignType: HereMapDesignType {
         get { _mapDesignType }
         set {
             _mapDesignType = newValue
-            if let controller = controller as? HereMapViewController {
+            if let controller = attachedMapController as? HereMapViewController {
                 let design = newValue
                 Task { @MainActor in
                     controller.setMapDesignType(design)
@@ -29,22 +26,14 @@ public final class HereMapViewState: MapViewState<HereMapDesignType> {
         }
     }
 
-    public override var uiSettings: MapUISettings {
-        get { _uiSettings }
-        set { _uiSettings = newValue }
-    }
-
     public init(
         id: String,
         mapDesignType: HereMapDesignType = HereMapDesign.NormalDay,
         cameraPosition: MapCameraPosition = .Default,
         uiSettings: MapUISettings = MapUISettings()
     ) {
-        self.stateId = id
         self._mapDesignType = mapDesignType
-        self._cameraPosition = cameraPosition
-        self._uiSettings = uiSettings
-        super.init()
+        super.init(id: id, initialCameraPosition: cameraPosition, uiSettings: uiSettings)
     }
 
     public convenience init(
@@ -55,37 +44,13 @@ public final class HereMapViewState: MapViewState<HereMapDesignType> {
         self.init(id: UUID().uuidString, mapDesignType: mapDesignType, cameraPosition: cameraPosition, uiSettings: uiSettings)
     }
 
-    public override func moveCameraTo(cameraPosition: MapCameraPosition, durationMillis: Long? = 0) {
-        let resolved = resolveCameraPosition(cameraPosition)
-        if let controller {
-            if let durationMillis, durationMillis > 0 {
-                controller.animateCamera(position: resolved, duration: durationMillis)
-            } else {
-                controller.moveCamera(position: resolved)
-            }
-        } else {
-            _cameraPosition = resolved
-        }
-    }
-
-    public override func fitBounds(bounds: GeoRectBounds, padding: Int) {
-        controller?.fitBounds(bounds: bounds, padding: padding)
-    }
-
-    public override func moveCameraTo(position: GeoPoint, durationMillis: Long? = 0) {
-        let updated = cameraPosition.copy(position: position)
-        moveCameraTo(cameraPosition: updated, durationMillis: durationMillis)
-    }
-
+    /// アプリが `state.getMapViewHolder()?.map` で `MapScene` を取れる形を保つための絞り込み。
     public override func getMapViewHolder() -> AnyMapViewHolder? {
         mapViewHolder.map { AnyMapViewHolder($0) }
     }
 
     func setController(_ controller: (any MapViewControllerProtocol)?) {
-        self.controller = controller
-        if let controller {
-            controller.moveCamera(position: cameraPosition)
-        }
+        attachController(controller)
     }
 
     func setMapViewHolder(_ holder: HereViewHolder?) {
@@ -93,19 +58,12 @@ public final class HereMapViewState: MapViewState<HereMapDesignType> {
     }
 
     func updateCameraPosition(_ cameraPosition: MapCameraPosition) {
-        _cameraPosition = cameraPosition
+        setCameraPositionInternal(cameraPosition)
     }
 
+    /// 地図側からデザインが変わったことを受け取る（setter を経由せず保持だけ更新する）。
     func onMapDesignTypeChange(_ value: HereMapDesignType) {
         _mapDesignType = value
-    }
-
-    private func resolveCameraPosition(_ target: MapCameraPosition) -> MapCameraPosition {
-        let isUnspecified = target.zoom == 0.0 && target.bearing == 0.0 && target.tilt == 0.0
-        if isUnspecified {
-            return cameraPosition.copy(position: target.position)
-        }
-        return target
     }
 }
 

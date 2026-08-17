@@ -14,6 +14,8 @@ Even using the wrapper API, you can still access the native HERE view if you wan
 
 https://mapconductor.com/setup/ios/here/
 
+### API key
+
 The HERE SDK is a binary `xcframework` wired in as a `.binaryTarget` (see `Package.swift`);
 it is not fetched from a public package registry. Initialize it once, before any map view
 is created:

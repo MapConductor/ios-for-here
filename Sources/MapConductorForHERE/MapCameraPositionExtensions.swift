@@ -1,6 +1,6 @@
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 
 private let converter = HereZoomAltitudeConverter()
 
@@ -29,7 +29,7 @@ extension MapCameraPosition {
             let shiftedTarget = Spherical.computeOffset(
                 origin: target,
                 distance: altitude * tan(tiltRadians),
-                heading: bearing
+                heading: CameraBearing.toNativeHeading(bearing)
             )
             let adjustedHereZoom = converter.altitudeToZoomLevel(
                 altitude: altitude / max(cos(tiltRadians), 0.05),
@@ -42,7 +42,7 @@ extension MapCameraPosition {
                 target: shiftedTarget,
                 tiltDeg: tiltAbsDeg,
                 hereZoomLevel: adjustedHereZoom,
-                bearing: bearing
+                bearing: CameraBearing.toNativeHeading(bearing)
             )
         }
         
@@ -52,7 +52,7 @@ extension MapCameraPosition {
             target: target,
             tiltDeg: min(tilt, 90.0),
             hereZoomLevel: hereZoomLevel,
-            bearing: bearing
+            bearing: CameraBearing.toNativeHeading(bearing)
         )
     }
 
@@ -102,7 +102,7 @@ extension MapCamera.State {
                     originalHereZoom,
                     latitude: originalCenter.latitude
                 ),
-                bearing: orientationAtTarget.bearing,
+                bearing: CameraBearing.bearingFromNativeHeading(orientationAtTarget.bearing),
                 tilt: -tiltAbsDeg,
                 visibleRegion: visibleRegion
             )
@@ -111,7 +111,7 @@ extension MapCamera.State {
         return MapCameraPosition(
             position: position,
             zoom: HereZoomAltitudeConverter.hereZoomToGoogleZoom(zoomLevel, latitude: position.latitude),
-            bearing: orientationAtTarget.bearing,
+            bearing: CameraBearing.bearingFromNativeHeading(orientationAtTarget.bearing),
             tilt: nativeTilt,
             visibleRegion: visibleRegion
         )

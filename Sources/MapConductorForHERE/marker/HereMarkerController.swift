@@ -2,7 +2,7 @@ import Combine
 import CoreGraphics
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 @MainActor
@@ -35,7 +35,17 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         super.init(markerManager: markerManager, renderer: renderer)
     }
 
+    /// 同一一覧の再送を見抜く門番。詳細は型のコメントに。
+    private var syncIdentity = MarkerListIdentity()
+
     func syncMarkers(_ markers: [Marker]) {
+        // 同じ一覧の再送は入口で帰す。SwiftUI はカメラが動くたびに body を
+        // 再評価し、そのたびに全マーカーがここへ来る。なぜそれが実害か
+        // （144k 件で操作の 89% が凍った）は core の MarkerListIdentity に。
+        guard syncIdentity.shouldProcess(markers) else {
+            refreshTileLayerIfNeeded()
+            return
+        }
         let newIds = Set(markers.map { $0.id })
         let oldIds = Set(markerStatesById.keys)
         var newStatesById: [String: MarkerState] = [:]
@@ -322,7 +332,10 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
             extraIconScale: Self.tileScale,
             cacheSizeBytes: tilingOptions.cacheSize,
             debugTileOverlay: tilingOptions.debugTileOverlay,
-            iconScaleCallback: tilingOptions.iconScaleCallback
+            iconScaleCallback: tilingOptions.iconScaleCallback,
+            // MapLibre と同じく tilingOptions から。渡し忘れると 14px の間引きが
+            // 黙って無効になり、密なデータで描画も突き合わせも重くなる。
+            declutterPx: tilingOptions.declutterPx
         )
         tileServer.register(routeId: routeId, provider: renderer)
         tileRenderer = renderer

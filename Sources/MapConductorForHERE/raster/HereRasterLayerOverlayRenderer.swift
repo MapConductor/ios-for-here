@@ -115,8 +115,13 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
 
     private func resolveTileSpec(state: RasterLayerState, routeId: String?) -> TileSpec? {
         let safeId = buildSafeId(state.id)
-        let sourceName = "mapconductor-raster-source-\(safeId)"
-        let layerName = "mapconductor-raster-layer-\(safeId)"
+        // The old handle is still alive while onChange builds its successor.
+        // Reusing its native names makes HERE resolve the old source, then
+        // remove the replacement when that old handle is released. Each
+        // native instance needs its own names; the logical state id stays stable.
+        let instance = UUID().uuidString
+        let sourceName = "mapconductor-raster-source-\(safeId)-\(instance)"
+        let layerName = "mapconductor-raster-layer-\(safeId)-\(instance)"
 
         switch state.source {
         case let .urlTemplate(_, tileSize, minZoom, maxZoom, _, _):

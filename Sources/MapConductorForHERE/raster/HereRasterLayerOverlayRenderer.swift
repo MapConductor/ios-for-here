@@ -68,19 +68,38 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
             return nil
         }
 
-        let providerConfig = RasterDataSourceConfiguration.Provider(
-            urlProvider: tileSpec.urlProvider,
-            tilingScheme: .quadTreeMercator,
-            storageLevels: tileSpec.storageLevels,
-            hasAlphaChannel: true
-        )
-        let cache = RasterDataSourceConfiguration.Cache(path: cacheDirectoryPath())
-        let config = RasterDataSourceConfiguration(
-            name: tileSpec.sourceName,
-            provider: providerConfig,
-            cache: cache
-        )
-        let dataSource = RasterDataSource(context: mapView.mapContext, configuration: config)
+        // Tiles this process draws are handed over in process. HERE fetches
+        // through its own network stack and, while the device reports no
+        // connectivity, does not fetch at all -- not even from 127.0.0.1 --
+        // so a URL-fed source goes blank the moment the network is away. A
+        // tile source is asked for bytes and answered from the same
+        // providers, with no network in between.
+        let dataSource: RasterDataSource
+        if let localTemplate = tileSpec.localTemplate {
+            dataSource = RasterDataSource(
+                context: mapView.mapContext,
+                name: tileSpec.sourceName,
+                tileSource: LocalRasterTileSource(
+                    tileServer: tileServer,
+                    template: localTemplate,
+                    storageLevels: tileSpec.storageLevels
+                )
+            )
+        } else {
+            let providerConfig = RasterDataSourceConfiguration.Provider(
+                urlProvider: tileSpec.urlProvider,
+                tilingScheme: .quadTreeMercator,
+                storageLevels: tileSpec.storageLevels,
+                hasAlphaChannel: true
+            )
+            let cache = RasterDataSourceConfiguration.Cache(path: cacheDirectoryPath())
+            let config = RasterDataSourceConfiguration(
+                name: tileSpec.sourceName,
+                provider: providerConfig,
+                cache: cache
+            )
+            dataSource = RasterDataSource(context: mapView.mapContext, configuration: config)
+        }
 
         if state.debug {
             NSLog("[MapConductor] RasterLayer debug mode: id=%@", state.id)
@@ -124,7 +143,7 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
         let layerName = "mapconductor-raster-layer-\(safeId)-\(instance)"
 
         switch state.source {
-        case let .urlTemplate(_, tileSize, minZoom, maxZoom, _, _):
+        case let .urlTemplate(template, tileSize, minZoom, maxZoom, _, scheme):
             // プロキシ経由ならローカルサーバーの XYZ テンプレート、そうでなければ
             // リモートのテンプレートを直接 HERE に供給する。
             guard let urlProvider = makeUrlProvider(state: state, routeId: routeId, tileSize: tileSize) else {
@@ -133,11 +152,26 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
             let min = minZoom ?? 0
             let max = maxZoom ?? 20
             let levels = Array(min...max).map(Int32.init)
+            // The proxy route is local by construction; a direct template is
+            // local when it is one of the server's own.
+            let localTemplate: String?
+            if let routeId {
+                localTemplate = tileServer.urlTemplate(
+                    routeId: routeId,
+                    tileSize: tileSize,
+                    cacheKey: String(state.fingerPrint().hashValue)
+                )
+            } else if scheme != .TMS, template.hasPrefix(tileServer.baseUrl + "/") {
+                localTemplate = template
+            } else {
+                localTemplate = nil
+            }
             return TileSpec(
                 urlProvider: urlProvider,
                 sourceName: sourceName,
                 layerName: layerName,
-                storageLevels: levels
+                storageLevels: levels,
+                localTemplate: localTemplate
             )
 
         case .tileJson:
@@ -245,6 +279,8 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
         let sourceName: String
         let layerName: String
         let storageLevels: [Int32]
+        /// The XYZ template on this process's tile server, when the tiles come from there.
+        var localTemplate: String? = nil
     }
 }
 
@@ -353,4 +389,118 @@ private final class HereRasterTileProxyProvider: TileProvider {
     }
 
     private static let fetchCacheSizeBytes = 16 * 1024 * 1024
+}
+
+/// A HERE tile source answered from this process's tile server, with no HTTP
+/// hop and no dependence on the device's connectivity.
+private final class LocalRasterTileSource: RasterTileSource {
+    private let tileServer: LocalTileServer
+    private let template: String
+    let storageLevels: [Int32]
+    let tilingScheme: TilingScheme = .quadTreeMercator
+
+    /// Renders block on the server's gate, so they run off HERE's threads --
+    /// and on a few of them only. HERE asks for a screenful at once, and a
+    /// thread per request parked on the gate is how a process runs out of
+    /// GCD threads and stops answering touches.
+    private static let workers: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "MapConductorForHERE.localTile"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 8
+        return queue
+    }()
+
+    init(tileServer: LocalTileServer, template: String, storageLevels: [Int32]) {
+        self.tileServer = tileServer
+        self.template = template
+        self.storageLevels = storageLevels
+    }
+
+    func getDataVersion(tileKey: TileKey) -> TileSourceDataVersion { Self.version }
+
+    func addDelegate(_ delegate: any TileSourceDelegate) {}
+
+    func removeDelegate(_ delegate: any TileSourceDelegate) {}
+
+    func loadTile(
+        tileKey: TileKey,
+        completionHandler: any RasterTileSourceLoadResultHandler
+    ) -> (any TileSourceLoadTileRequestHandle)? {
+        // Exactly one answer per request, whatever happens. A request HERE
+        // cancels is still one it is waiting on: leave it unanswered and the
+        // slot is never freed, and after a few gestures HERE stops asking for
+        // tiles at all -- the map keeps the last picture and looks frozen.
+        let request = Request(tileKey: tileKey, handler: completionHandler)
+        // HERE counts rows from the south (Tokyo at z12 is row 2483, not
+        // 1612); the templates count from the north, as XYZ does.
+        let row = (Int32(1) << tileKey.level) - 1 - tileKey.y
+        let urlText = template
+            .replacingOccurrences(of: "{z}", with: "\(tileKey.level)")
+            .replacingOccurrences(of: "{x}", with: "\(tileKey.x)")
+            .replacingOccurrences(of: "{y}", with: "\(row)")
+        let server = tileServer
+        Self.workers.addOperation {
+            guard !request.isCancelled, let url = URL(string: urlText) else {
+                request.answer(nil)
+                return
+            }
+            request.answer(server.renderLocalTile(url: url) { request.isCancelled })
+        }
+        return request
+    }
+
+    /// One tile HERE is waiting on, answered once.
+    private final class Request: TileSourceLoadTileRequestHandle, @unchecked Sendable {
+        private let lock = NSLock()
+        private var answered = false
+        private var cancelled = false
+        private let tileKey: TileKey
+        private let handler: any RasterTileSourceLoadResultHandler
+
+        init(tileKey: TileKey, handler: any RasterTileSourceLoadResultHandler) {
+            self.tileKey = tileKey
+            self.handler = handler
+        }
+
+        var isCancelled: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return cancelled
+        }
+
+        /// A failure is a failure, never an empty tile: HERE keeps a picture
+        /// and asks no more, but retries a failure.
+        func answer(_ data: Data?) {
+            lock.lock()
+            if answered { lock.unlock(); return }
+            answered = true
+            lock.unlock()
+            if let data {
+                handler.loaded(tileKey: tileKey, data: data, metadata: LocalRasterTileSource.metadata)
+            } else {
+                handler.failed(tileKey)
+            }
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+            // Off HERE's own cancelling thread, and off the render queue,
+            // which a burst of gestures has already filled.
+            DispatchQueue.global(qos: .utility).async { [self] in answer(nil) }
+        }
+    }
+
+    fileprivate static let version = TileSourceDataVersion(majorVersion: 0, minorVersion: 0)
+    /// Tiles drawn here change only with their URL, so they are given a long
+    /// life -- but a plausible one. A date at the end of time does not
+    /// survive the trip into the SDK: every tile comes back already expired,
+    /// the same one is asked for again every 400 ms, and after a pinch the
+    /// map stops asking for tiles at all (seen on android, same SDK core).
+    fileprivate static let metadata = TileSourceTileMetadata(
+        dataVersion: version,
+        dataExpiryTimestamp: Date(timeIntervalSinceNow: 10 * 365 * 24 * 60 * 60)
+    )
+
 }

@@ -46,6 +46,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     private var strategyMarkerSubscriptions: [String: AnyCancellable] = [:]
     private var strategyMarkerStatesById: [String: MarkerState] = [:]
     private var loadedMapScheme: MapScheme?
+    private var appliedUISettings: MapUISettings?
     private var latestContent = MapViewContent()
     private var isSceneLoaded = false
     private var needsOverlayResetOnNextSceneLoaded = false
@@ -188,7 +189,10 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     }
 
     public func updateGestures(_ ui: MapUISettings) {
-        guard let mapView else { return }
+        guard let mapView, appliedUISettings != ui else { return }
+        // Camera events re-evaluate SwiftUI during a gesture. Configure the
+        // recognisers only when settings change, not for every camera frame.
+        appliedUISettings = ui
         markerController?.scrollGestureEnabled = ui.scrollGesture
 
         func apply(_ enabled: Bool, _ gesture: heresdk.GestureType) {
@@ -409,6 +413,10 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     public func loadInitialScene() {
         guard let mapView else { return }
         let scheme = state.mapDesignType.getValue()
+        // Mark the request before camera callbacks cause the first view update.
+        // Otherwise that update starts a second load of the same scene.
+        loadedMapScheme = scheme
+        rasterLayerController?.sceneWillLoad()
         mapView.mapScene.loadScene(mapScheme: scheme) { [weak self] error in
             guard let self else { return }
             if let error {
@@ -429,6 +437,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         guard loadedMapScheme != scheme else { return }
         loadedMapScheme = scheme
         isSceneLoaded = false
+        rasterLayerController?.sceneWillLoad()
         needsOverlayResetOnNextSceneLoaded = true
         controller?.setMapDesignType(state.mapDesignType)
     }
@@ -480,6 +489,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         strategyMarkerController = nil
         controller?.setSceneLoadedHandler(nil)
         controller = nil
+        appliedUISettings = nil
         mapView = nil
     }
 
@@ -496,24 +506,24 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     }
 
     private func syncContentAfterSceneLoaded(resetOverlays: Bool) {
-        if resetOverlays {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // A scene load replaces HERE's layers, including style layers
+            // mounted outside the content collector. Replay those too.
+            await self.rasterLayerController?.sceneDidLoad()
+            if resetOverlays {
                 await self.markerController?.clear()
                 await self.polylineController?.clear()
                 await self.polygonController?.clear()
                 await self.circleController?.clear()
                 await self.groundImageController?.clear()
-                await self.rasterLayerController?.clear()
                 // The clears above bypass the overlay collectors, which still
                 // hold their membership. Reset them so the following
                 // syncContent re-adds the overlays instead of seeing "no
                 // change" and skipping the repopulate after a scene reload.
                 self.overlayScope?.clear()
-                self.syncContent(self.latestContent)
             }
-        } else {
-            syncContent(latestContent)
+            self.syncContent(self.latestContent)
         }
     }
 

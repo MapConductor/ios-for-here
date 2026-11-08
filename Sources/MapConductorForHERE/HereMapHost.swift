@@ -98,6 +98,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         controller.registerOverlayController(polygonController)
         controller.registerOverlayController(groundImageController)
         controller.registerOverlayController(rasterLayerController)
+        controller.clearOverlaysHandler = { [weak self] in await self?.clearOverlays() }
 
         let overlayScope = MapOverlayScope()
         self.overlayScope = overlayScope
@@ -445,6 +446,17 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     /// 地図の描画を止める。SwiftUI の `dismantleUIView` が呼んでいた `mapView.pause()` 相当。
     public func pauseMapView() {
         mapView?.pause()
+    }
+
+    /// android-sdk の `clearOverlays()` と同じく、各オーバーレイのコントローラを空にする。
+    /// `controller.clearOverlaysHandler` から呼ばれる。
+    func clearOverlays() async {
+        await markerController?.clear()
+        await polylineController?.clear()
+        await polygonController?.clear()
+        await groundImageController?.clear()
+        await circleController?.clear()
+        await rasterLayerController?.clear()
     }
 
     public func unbind() {

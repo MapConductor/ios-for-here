@@ -1,6 +1,6 @@
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 
 @MainActor
 final class HereGroundImageOverlayRenderer: AbstractGroundImageOverlayRenderer<HereGroundImageHandle> {
@@ -131,6 +131,7 @@ final class HereGroundImageOverlayRenderer: AbstractGroundImageOverlayRenderer<H
                 .withDataSource(named: sourceName, contentType: .rasterImage)
                 .forMap(mapView.hereMap)
                 .build()
+            HereOverlayStacking.place(layer, named: layerName, OverlayStackKey(.groundImage), on: mapView)
 
             return HereGroundImageHandle(
                 routeId: routeId,
@@ -150,6 +151,7 @@ final class HereGroundImageOverlayRenderer: AbstractGroundImageOverlayRenderer<H
 
     private func removeHandle(_ handle: HereGroundImageHandle) {
         handle.layer.setEnabled(false)
+        HereOverlayStacking.remove(named: handle.layerName, on: mapView)
     }
 
     private func cacheDirectoryPath() -> String {

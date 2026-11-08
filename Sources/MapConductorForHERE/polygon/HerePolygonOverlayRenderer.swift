@@ -1,6 +1,6 @@
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 /// HERE の穴付きポリゴンは「分割方式」で描画する。
@@ -73,7 +73,7 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
         }
 
         if finger.zIndex != prevFinger.zIndex {
-            let order = Int32(truncatingIfNeeded: current.state.zIndex)
+            let order = OverlayStacking.globalZIndex(OverlayStackKey(.polygon, zIndex: current.state.zIndex), bandStride: HereOverlayStacking.drawOrderBandStride)
             polygon.forEach { $0.drawOrder = order }
         }
         return polygon
@@ -116,7 +116,7 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
             outlineColor: state.strokeColor,
             outlineWidthInPixels: state.strokeWidth
         )
-        polygon.drawOrder = Int32(truncatingIfNeeded: state.zIndex)
+        polygon.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.polygon, zIndex: state.zIndex), bandStride: HereOverlayStacking.drawOrderBandStride)
         return [polygon]
     }
 
@@ -135,7 +135,7 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
         let outerRing = makeRing(points: state.points, geodesic: state.geodesic)
         let holeRings = state.holes.map { makeRing(points: $0, geodesic: state.geodesic) }
         let pieces = splitPolygonWithHolesIntoSimpleRings(outer: outerRing, holes: holeRings)
-        let order = Int32(truncatingIfNeeded: state.zIndex)
+        let order = OverlayStacking.globalZIndex(OverlayStackKey(.polygon, zIndex: state.zIndex), bandStride: HereOverlayStacking.drawOrderBandStride)
 
         var polygons: [MapPolygon] = []
         for piece in pieces {
@@ -156,7 +156,7 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
 
     /// 輪郭のみ（透明 fill）: 外周 + 各穴。塗りは ``buildSplitFillPolygons`` が担当する。
     private func buildOutlinePolygons(state: PolygonState) -> [MapPolygon] {
-        let order = Int32(truncatingIfNeeded: state.zIndex)
+        let order = OverlayStacking.globalZIndex(OverlayStackKey(.polygon, zIndex: state.zIndex), bandStride: HereOverlayStacking.drawOrderBandStride)
         let rings = [makeRing(points: state.points, geodesic: state.geodesic)]
             + state.holes.map { makeRing(points: $0, geodesic: state.geodesic) }
 

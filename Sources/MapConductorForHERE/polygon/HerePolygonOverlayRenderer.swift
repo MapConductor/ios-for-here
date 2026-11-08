@@ -177,7 +177,8 @@ final class HerePolygonOverlayRenderer: AbstractPolygonOverlayRenderer<HereActua
     }
 
     private func makeRing(points: [GeoPointProtocol], geodesic: Bool) -> [GeoPointProtocol] {
-        var ring = (geodesic ? WGS84Geodesic.createInterpolatePoints(points) : Planar.createInterpolatePoints(points))
+        // geodesic は閉じる辺（末尾 → 先頭）も大圏で補間する（塗りと輪郭が同じ MapPolygon）。
+        var ring = (geodesic ? densifyGeodesicRing(points) : Planar.createInterpolatePoints(points))
             .map { $0.normalize() }
         if let first = ring.first, let last = ring.last,
            !(GeoPoint.from(position: first) == GeoPoint.from(position: last)) {

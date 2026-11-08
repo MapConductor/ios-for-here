@@ -280,6 +280,8 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         )
 
         self.mapView = mapView
+        // ラスター・グラウンドイメージをマップアイテムより下に置くための錨。アイテムより先に作る。
+        HereOverlayStacking.installAnchor(on: mapView)
         bind(state: state, mapView: mapView)
         // android-for-here の HereMapView.kt と同じ位置で適用する。
         applyCameraRestriction(cameraRestriction)

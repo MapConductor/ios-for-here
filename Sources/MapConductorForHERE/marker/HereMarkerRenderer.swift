@@ -1,5 +1,5 @@
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import QuartzCore
 import UIKit
 
@@ -43,7 +43,7 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
                 image: image,
                 anchor: bitmapIcon.toHereAnchor()
             )
-            marker.drawOrder = Int32(truncatingIfNeeded: state.zIndex ?? 0)
+            marker.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.marker, zIndex: state.zIndex ?? 0), bandStride: HereOverlayStacking.drawOrderBandStride)
             marker.opacity = (state.getAnimation() != nil && markerAnimationRunners[state.id] == nil) ? 0.0 : 1.0
             appliedIconHashes[state.id] = iconContentHash(pngData, bitmapIcon)
             mapView.mapScene.addMapMarker(marker)
@@ -120,7 +120,7 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     private func apply(state: MarkerState, bitmapIcon: BitmapIcon, to marker: MapMarker) {
         marker.coordinates = state.position.toGeoCoordinates()
         marker.anchor = bitmapIcon.toHereAnchor()
-        marker.drawOrder = Int32(truncatingIfNeeded: state.zIndex ?? 0)
+        marker.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.marker, zIndex: state.zIndex ?? 0), bandStride: HereOverlayStacking.drawOrderBandStride)
         marker.opacity = (state.getAnimation() != nil && markerAnimationRunners[state.id] == nil) ? 0.0 : 1.0
 
         // Only rebuild and reassign the MapImage when the icon content actually changed.

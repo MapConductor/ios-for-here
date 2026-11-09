@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 /// 地図一式（HERE の `MapView` + コントローラ群 + オーバーレイ結線）を保持するホスト。
@@ -86,6 +86,17 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         self.circleController = circleController
         self.groundImageController = groundImageController
         self.rasterLayerController = rasterLayerController
+        // Many polygons are drawn into raster tiles and shown as one raster
+        // layer; taps still resolve against the original shapes.
+        let polygonTiler = PolygonTiler()
+        polygonTiler.onTemplate = { [weak rasterLayerController] template, tileSize in
+            if let template {
+                await rasterLayerController?.upsert(state: PolygonTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterLayerController?.removeById(PolygonTiler.layerId)
+            }
+        }
+        polygonController.tiler = polygonTiler
 
         // Route the simple overlays through the shared collector so each
         // controller subscribes to one source of truth instead of the map
@@ -239,6 +250,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         overlayScope?.rasterLayerCollector.sync(content.rasterLayers.map { $0.state })
         overlayScope?.polylineCollector.sync(content.polylines.map { $0.state })
         overlayScope?.polygonCollector.sync(content.polygons.map { $0.state })
+        polygonController?.tiler?.refreshIfServerMoved()
         for handler in content.polygonSyncHandlers {
             let hullController = hullPolygonController
             handler.bindPolygonSync { [weak hullController] states in

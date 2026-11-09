@@ -1,5 +1,5 @@
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 @MainActor
@@ -13,7 +13,7 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
 
     override func createPolyline(state: PolylineState) async -> MapPolyline? {
         guard let mapView, let polyline = makePolyline(state: state) else { return nil }
-        mapView.mapScene.addMapPolyline(polyline)
+        HereOverlayStacking.addPolyline(polyline, to: mapView)
         return polyline
     }
 
@@ -42,13 +42,13 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
         }
 
         if finger.zIndex != prevFinger.zIndex {
-            polyline.drawOrder = Int32(truncatingIfNeeded: current.state.zIndex)
+            polyline.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.polyline, zIndex: current.state.zIndex), bandStride: HereOverlayStacking.drawOrderBandStride)
             needsReAdd = true
         }
 
         if needsReAdd {
             mapView.mapScene.removeMapPolyline(polyline)
-            mapView.mapScene.addMapPolyline(polyline)
+            HereOverlayStacking.addPolyline(polyline, to: mapView)
         }
 
         return polyline
@@ -67,7 +67,7 @@ final class HerePolylineOverlayRenderer: AbstractPolylineOverlayRenderer<MapPoly
         guard let geometry = makeGeometry(state: state),
               let representation = makeRepresentation(state: state) else { return nil }
         let polyline = MapPolyline(geometry: geometry, representation: representation)
-        polyline.drawOrder = Int32(truncatingIfNeeded: state.zIndex)
+        polyline.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.polyline, zIndex: state.zIndex), bandStride: HereOverlayStacking.drawOrderBandStride)
         return polyline
     }
 

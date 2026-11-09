@@ -1,6 +1,6 @@
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 @MainActor
@@ -111,6 +111,12 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
                 .forMap(mapView.hereMap)
                 .build()
             layer.setEnabled(state.visible)
+            HereOverlayStacking.place(
+                layer,
+                named: tileSpec.layerName,
+                OverlayStacking.rasterKey(stateId: state.id, zIndex: state.zIndex),
+                on: mapView
+            )
             return HereRasterLayerHandle(
                 dataSource: dataSource,
                 layer: layer,
@@ -127,6 +133,7 @@ final class HereRasterLayerOverlayRenderer: AbstractRasterLayerOverlayRenderer<H
 
     private func removeHandle(_ handle: HereRasterLayerHandle) {
         handle.layer.setEnabled(false)
+        HereOverlayStacking.remove(named: handle.layerName, on: mapView)
         if let routeId = handle.routeId {
             tileServer.unregister(routeId: routeId)
         }

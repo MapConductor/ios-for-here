@@ -1,5 +1,5 @@
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 @MainActor
@@ -19,7 +19,7 @@ final class HereCircleOverlayRenderer: AbstractCircleOverlayRenderer<MapPolygon>
             outlineColor: state.strokeColor,
             outlineWidthInPixels: state.strokeWidth
         )
-        polygon.drawOrder = Int32(state.zIndex ?? 0)
+        polygon.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.circle, zIndex: state.zIndex ?? 0), bandStride: HereOverlayStacking.drawOrderBandStride)
         mapView.mapScene.addMapPolygon(polygon)
         return polygon
     }
@@ -47,7 +47,7 @@ final class HereCircleOverlayRenderer: AbstractCircleOverlayRenderer<MapPolygon>
             circle.outlineWidth = current.state.strokeWidth
         }
         if finger.zIndex != prevFinger.zIndex {
-            circle.drawOrder = Int32(current.state.zIndex ?? 0)
+            circle.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.circle, zIndex: current.state.zIndex ?? 0), bandStride: HereOverlayStacking.drawOrderBandStride)
         }
 
         return circle

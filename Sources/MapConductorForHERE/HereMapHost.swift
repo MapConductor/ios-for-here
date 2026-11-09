@@ -109,6 +109,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         controller.registerOverlayController(polygonController)
         controller.registerOverlayController(groundImageController)
         controller.registerOverlayController(rasterLayerController)
+        controller.clearOverlaysHandler = { [weak self] in await self?.clearOverlays() }
 
         let overlayScope = MapOverlayScope()
         self.overlayScope = overlayScope
@@ -291,6 +292,8 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         )
 
         self.mapView = mapView
+        // ラスター・グラウンドイメージをマップアイテムより下に置くための錨。アイテムより先に作る。
+        HereOverlayStacking.installAnchor(on: mapView)
         bind(state: state, mapView: mapView)
         // android-for-here の HereMapView.kt と同じ位置で適用する。
         applyCameraRestriction(cameraRestriction)
@@ -332,6 +335,17 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         applyStrategyRendering(nil)
     }
 
+    /// `clearOverlays()` から呼ばれる。strategy は接続したまま、描いたマーカーだけを消す。
+    /// 同じインスタンスの一覧が送られている間は描かず、顔ぶれが変わるか作り直された state が
+    /// 来たら描き直す（StrategyMarkerManager.clearMarkers・オーバーレイのコレクタと同じ）。
+    public func clearMarkers() async {
+        strategyClearedUntilListChanges = true
+        await strategyMarkerController?.clear()
+    }
+
+    /// ``clearMarkers()`` の後、一覧が変わるまで描かない印。
+    private var strategyClearedUntilListChanges = false
+
     public func beginContentPass() {
         strategyConnectedThisPass = false
     }
@@ -351,6 +365,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
                 let renderer = HereMarkerRenderer(mapView: mapView)
                 strategyMarkerRenderer = renderer
                 strategyMarkerController = StrategyMarkerController(strategy: strategy, renderer: renderer)
+                strategyClearedUntilListChanges = false
                 // find() の android 同等 screen 空間判定用に geo→screen 投影を注入する。
                 strategyMarkerController?.markerProjector = { [weak self] geo in
                     guard let mapView = self?.mapView,
@@ -391,6 +406,10 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             newStatesById[state.id] = state
         }
         strategyMarkerStatesById = newStatesById
+        if strategyClearedUntilListChanges {
+            guard shouldSyncList else { return }
+            strategyClearedUntilListChanges = false
+        }
 
         for id in oldIds.subtracting(newIds) {
             strategyMarkerSubscriptions[id]?.cancel()
@@ -457,6 +476,19 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     /// 地図の描画を止める。SwiftUI の `dismantleUIView` が呼んでいた `mapView.pause()` 相当。
     public func pauseMapView() {
         mapView?.pause()
+    }
+
+    /// android-sdk の `clearOverlays()` と同じく、各オーバーレイのコントローラを空にする。
+    /// `controller.clearOverlaysHandler` から呼ばれる。
+    func clearOverlays() async {
+        await markerController?.clear()
+        await polylineController?.clear()
+        await polygonController?.clear()
+        await groundImageController?.clear()
+        await circleController?.clear()
+        await rasterLayerController?.clear()
+        // strategy（クラスタリングなど）が描いたマーカーも消す。
+        await state.serviceRegistry.clearMarkerRendering()
     }
 
     public func unbind() {

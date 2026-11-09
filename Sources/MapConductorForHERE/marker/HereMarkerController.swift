@@ -8,6 +8,8 @@ import UIKit
 @MainActor
 final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarkerRenderer> {
     private weak var mapView: MapView?
+    /// 載せているマーカーのタイルの地図レイヤ名（``HereOverlayStacking`` の並びから外すため）。
+    private var tileLayerName: String?
     private var markerStatesById: [String: MarkerState] = [:]
     private var markerSubscriptions: [String: AnyCancellable] = [:]
     private var draggingMarkerId: String?
@@ -383,8 +385,11 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
                 .forMap(mapView.hereMap)
                 .build()
             layer.setEnabled(true)
+            // マーカーのタイルはマーカーと同じ帯（自分の地図レイヤの中では一番上）。
+            HereOverlayStacking.place(layer, named: layerName, OverlayStackKey(.marker), on: mapView)
             tileDataSource = dataSource
             tileLayer = layer
+            tileLayerName = layerName
         } catch {
             NSLog("[MapConductor] HERE marker tile layer creation failed: %@", String(describing: error))
         }
@@ -392,6 +397,8 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
 
     private func removeTileLayer() {
         tileLayer?.setEnabled(false)
+        if let tileLayerName { HereOverlayStacking.remove(named: tileLayerName, on: mapView) }
+        tileLayerName = nil
         tileLayer = nil
         tileDataSource = nil
     }

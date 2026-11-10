@@ -129,6 +129,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
             defaultMarkerIcon: defaultMarkerIconForTiling,
             tilingEnabled: tilingOptions.enabled,
             tiledMarkerIds: &localTiledMarkerIds,
+            addedTracker: addedTracker,
             shouldTile: { [shouldTileMarkers] state in
                 shouldTileMarkers && !state.draggable && state.getAnimation() == nil
             }
@@ -144,6 +145,9 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         } else {
             removeTileLayer()
         }
+
+        // The newly tiled markers are on the map once their tile layer is.
+        await addedTracker.admitAndNotify(result.tiledAdded)
     }
 
     private func restoreNativeMarkersIfNeeded(states: [MarkerState]) async {

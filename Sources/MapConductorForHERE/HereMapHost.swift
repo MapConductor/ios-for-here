@@ -108,6 +108,15 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             }
         }
         polylineController.tiler = polylineTiler
+        let circleTiler = CircleTiler()
+        circleTiler.onTemplate = { [weak rasterLayerController] template, tileSize in
+            if let template {
+                await rasterLayerController?.upsert(state: CircleTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterLayerController?.removeById(CircleTiler.layerId)
+            }
+        }
+        circleController.tiler = circleTiler
 
         // Route the simple overlays through the shared collector so each
         // controller subscribes to one source of truth instead of the map
@@ -165,6 +174,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             self?.lastKnownCameraPosition = position
             self?.state.updateCameraPosition(position)
             self?.polylineController?.setCurrentCameraPosition(position)
+            self?.circleController?.setCurrentCameraPosition(position)
             self?.onCameraMoveStart?(position)
             self?.infoBubbleCoordinator?.updateAllLayouts()
             Task { [weak self] in
@@ -175,6 +185,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             self?.lastKnownCameraPosition = position
             self?.state.updateCameraPosition(position)
             self?.polylineController?.setCurrentCameraPosition(position)
+            self?.circleController?.setCurrentCameraPosition(position)
             self?.onCameraMove?(position)
             self?.infoBubbleCoordinator?.updateAllLayouts()
             Task { [weak self] in
@@ -185,6 +196,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             self?.lastKnownCameraPosition = position
             self?.state.updateCameraPosition(position)
             self?.polylineController?.setCurrentCameraPosition(position)
+            self?.circleController?.setCurrentCameraPosition(position)
             self?.onCameraMoveEnd?(position)
             self?.infoBubbleCoordinator?.updateAllLayouts()
             Task { [weak self] in
@@ -263,7 +275,9 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         overlayScope?.polygonCollector.sync(content.polygons.map { $0.state })
         polygonController?.tiler?.refreshIfServerMoved()
         if polylineController?.tiler?.setOptions(content.polylineTilingOptions) == true { overlayScope?.polylineCollector.flush() }
+        if circleController?.tiler?.setOptions(content.circleTilingOptions) == true { overlayScope?.circleCollector.flush() }
         polylineController?.tiler?.refreshIfServerMoved()
+        circleController?.tiler?.refreshIfServerMoved()
         for handler in content.polygonSyncHandlers {
             let hullController = hullPolygonController
             handler.bindPolygonSync { [weak hullController] states in

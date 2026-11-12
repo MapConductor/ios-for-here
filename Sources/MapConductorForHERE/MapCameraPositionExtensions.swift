@@ -69,9 +69,18 @@ public extension MapCameraPosition {
     }
 }
 
+/// HERE（iOS）のカメラの縦の視野角（度）。
+///
+/// SDK は値を公開していない。iPad Pro 11 で、傾けた地図の中心と北の地点の画面位置から
+/// 焦点距離を求めて実測した値（tilt 30°〜60° で一定）。
+let hereVerticalFieldOfView: Double = 31.8
+
 extension MapCamera.State {
+    /// - Parameter paddings: いま地図に当てているパディング（主点の位置で表している）。
+    ///   ターゲットはパディングを除いた領域の中央にあるので、そのまま載せて返す。
     func toMapCameraPosition(
         logicalTiltHint: Double? = nil,
+        paddings: MapPaddingsProtocol? = nil,
         visibleRegion: VisibleRegion? = nil
     ) -> MapCameraPosition {
         let position = targetCoordinates.toGeoPoint()
@@ -104,7 +113,9 @@ extension MapCamera.State {
                 ),
                 bearing: CameraBearing.bearingFromNativeHeading(orientationAtTarget.bearing),
                 tilt: -tiltAbsDeg,
-                visibleRegion: visibleRegion
+                paddings: paddings ?? MapPaddings.Zeros,
+                visibleRegion: visibleRegion,
+                fov: hereVerticalFieldOfView
             )
         }
 
@@ -113,7 +124,9 @@ extension MapCamera.State {
             zoom: HereZoomAltitudeConverter.hereZoomToGoogleZoom(zoomLevel, latitude: position.latitude),
             bearing: CameraBearing.bearingFromNativeHeading(orientationAtTarget.bearing),
             tilt: nativeTilt,
-            visibleRegion: visibleRegion
+            paddings: paddings ?? MapPaddings.Zeros,
+            visibleRegion: visibleRegion,
+            fov: hereVerticalFieldOfView
         )
     }
 }

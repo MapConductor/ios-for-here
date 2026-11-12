@@ -110,11 +110,33 @@ final class HereMapViewController: NSObject,
 
     func moveCamera(position: MapCameraPosition) {
         lastRequestedCameraPosition = position
+        applyPrincipalPoint(position.paddings)
         hereHolder.mapView.camera.applyUpdate(position.toMapCameraUpdate())
+    }
+
+    /// `MapCameraPosition.paddings` をカメラの主点にする。HERE のカメラはターゲットを主点に
+    /// 置くので、主点をパディングを除いた領域の中央へ動かす。主点は物理ピクセル。
+    /// `nil` は変えない。
+    private func applyPrincipalPoint(_ paddings: MapPaddingsProtocol?) {
+        guard let paddings else { return }
+        let mapView = hereHolder.mapView
+        let scale = mapView.pixelScale
+        let width = Double(mapView.bounds.width)
+        let height = Double(mapView.bounds.height)
+        guard width > 0, height > 0 else { return }
+        let point = Point2D(
+            x: (width + paddings.left - paddings.right) / 2.0 * scale,
+            y: (height + paddings.top - paddings.bottom) / 2.0 * scale
+        )
+        let current = mapView.camera.principalPoint
+        if abs(current.x - point.x) > 0.5 || abs(current.y - point.y) > 0.5 {
+            mapView.camera.principalPoint = point
+        }
     }
 
     func animateCamera(position: MapCameraPosition, duration: Long) {
         lastRequestedCameraPosition = position
+        applyPrincipalPoint(position.paddings)
         let display = position.toHereDisplayCamera()
         let animation = MapCameraAnimationFactory.flyTo(
             target: display.target.toGeoCoordinates().toUpdate(),
@@ -182,6 +204,7 @@ final class HereMapViewController: NSObject,
     func onMapCameraUpdated(_ cameraState: MapCamera.State) {
         let mapCameraPosition = cameraState.toMapCameraPosition(
             logicalTiltHint: lastRequestedCameraPosition?.tilt,
+            paddings: lastRequestedCameraPosition?.paddings,
             visibleRegion: visibleRegion()
         )
         lastCameraPosition = mapCameraPosition
@@ -235,6 +258,7 @@ final class HereMapViewController: NSObject,
         case .started:
             if let current = hereHolder.mapView.camera.state.toMapCameraPosition(
                 logicalTiltHint: lastRequestedCameraPosition?.tilt,
+                paddings: lastRequestedCameraPosition?.paddings,
                 visibleRegion: visibleRegion()
             ) as MapCameraPosition? {
                 cameraMoveStartListener?(current)
@@ -250,12 +274,14 @@ final class HereMapViewController: NSObject,
             overlayControllers.dispatchCameraChanged(
                 hereHolder.mapView.camera.state.toMapCameraPosition(
                     logicalTiltHint: lastRequestedCameraPosition?.tilt,
+                    paddings: lastRequestedCameraPosition?.paddings,
                     visibleRegion: visibleRegion()
                 )
             )
             cameraMoveEndListener?(
                 hereHolder.mapView.camera.state.toMapCameraPosition(
                     logicalTiltHint: lastRequestedCameraPosition?.tilt,
+                    paddings: lastRequestedCameraPosition?.paddings,
                     visibleRegion: visibleRegion()
                 )
             )

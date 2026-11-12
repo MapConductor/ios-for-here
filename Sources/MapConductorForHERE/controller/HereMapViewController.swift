@@ -1,6 +1,6 @@
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 
 typealias HereMapDesignTypeChangeHandler = (HereMapDesignType) -> Void
 typealias HereSceneLoadedHandler = () -> Void
@@ -36,6 +36,10 @@ final class HereMapViewController: NSObject,
     private var mapDesignTypeChangeListener: HereMapDesignTypeChangeHandler?
     private var sceneLoadedHandler: HereSceneLoadedHandler?
     private var lastRequestedCameraPosition: MapCameraPosition?
+    /// 最後に指定されたパディング。パディングはカメラの主点を動かさず、中心をずらして
+    /// 再現し（``CameraPaddingEmulation``）、読み戻しで逆にずらすときに使う。
+    /// android-for-here と同じ。主点はアニメーションの最初で一気に切り替わるため使わない。
+    private var lastPaddings: MapPaddingsProtocol?
     private var cameraMoveEndTask: Task<Void, Never>?
 
     /// HERE はネイティブのカメラ範囲制限 API を持たないため、android-for-here と同じく
@@ -109,35 +113,77 @@ final class HereMapViewController: NSObject,
     }
 
     func moveCamera(position: MapCameraPosition) {
-        lastRequestedCameraPosition = position
-        applyPrincipalPoint(position.paddings)
-        hereHolder.mapView.camera.applyUpdate(position.toMapCameraUpdate())
+        let requested = rememberPaddings(position)
+        lastRequestedCameraPosition = requested
+        hereHolder.mapView.camera.applyUpdate(paddingApplied(requested).toMapCameraUpdate())
+        scheduleCorrection(requested)
     }
 
-    /// `MapCameraPosition.paddings` をカメラの主点にする。HERE のカメラはターゲットを主点に
-    /// 置くので、主点をパディングを除いた領域の中央へ動かす。主点は物理ピクセル。
-    /// `nil` は変えない。
-    private func applyPrincipalPoint(_ paddings: MapPaddingsProtocol?) {
-        guard let paddings else { return }
-        let mapView = hereHolder.mapView
-        let scale = mapView.pixelScale
-        let width = Double(mapView.bounds.width)
-        let height = Double(mapView.bounds.height)
-        guard width > 0, height > 0 else { return }
-        let point = Point2D(
-            x: (width + paddings.left - paddings.right) / 2.0 * scale,
-            y: (height + paddings.top - paddings.bottom) / 2.0 * scale
+    /// `paddings` が `nil` なら今のパディングを引き継ぎ、指定されていれば覚える。
+    private func rememberPaddings(_ position: MapCameraPosition) -> MapCameraPosition {
+        if let paddings = position.paddings { lastPaddings = paddings }
+        return position.copy(paddings: lastPaddings ?? MapPaddings.Zeros)
+    }
+
+    /// HERE へ渡すカメラ。パディングの分だけ中心をずらす。
+    private func paddingApplied(_ position: MapCameraPosition) -> MapCameraPosition {
+        CameraPaddingEmulation.applied(
+            to: position,
+            fov: hereVerticalFieldOfView,
+            viewportSize: hereHolder.mapView.bounds.size
         )
-        let current = mapView.camera.principalPoint
-        if abs(current.x - point.x) > 0.5 || abs(current.y - point.y) > 0.5 {
-            mapView.camera.principalPoint = point
+    }
+
+    /// 補正の世代。新しい移動が始まったら、前の移動の補正は捨てる。
+    private var correctionGeneration = 0
+
+    /// 補正は地図がカメラを描き終えてから測る（applyUpdate の直後は投影がまだ古い）。
+    private func scheduleCorrection(_ requested: MapCameraPosition) {
+        correctionGeneration += 1
+        let generation = correctionGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.correctPaddedTarget(requested, generation: generation)
         }
     }
 
+    /// 計算で置いた中心は、HERE の縮尺や tilt の扱いが計算と違うとずれる。地図の投影で
+    /// 実際の位置を測り、パディングの残りの中央に来るまで中心だけを動かし直す。
+    /// 1 回ごとに反映を待ってから測り直す。
+    private func correctPaddedTarget(_ requested: MapCameraPosition, generation: Int, remaining: Int = 4) {
+        guard remaining > 0, generation == correctionGeneration else { return }
+        let holder = hereHolder
+        guard let center = CameraPaddingEmulation.correctedCenter(
+            target: requested.position,
+            paddings: requested.paddings,
+            viewportSize: holder.mapView.bounds.size,
+            project: { holder.toScreenOffset(position: $0) },
+            unproject: { holder.fromScreenOffsetSync(offset: $0) }
+        ) else { return }
+        holder.mapView.camera.lookAt(point: center.toGeoCoordinates())
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.correctPaddedTarget(requested, generation: generation, remaining: remaining - 1)
+        }
+    }
+
+    /// HERE から読み戻したカメラ（中心）を、ターゲット・パディング・視野角を持つカメラへ戻す。
+    private func reportedCamera(_ state: MapCamera.State) -> MapCameraPosition {
+        let holder = hereHolder
+        return CameraPaddingEmulation.restored(
+            state.toMapCameraPosition(
+                logicalTiltHint: lastRequestedCameraPosition?.tilt,
+                visibleRegion: visibleRegion()
+            ),
+            paddings: lastPaddings,
+            fov: hereVerticalFieldOfView,
+            viewportSize: holder.mapView.bounds.size,
+            unproject: { holder.fromScreenOffsetSync(offset: $0) }
+        )
+    }
+
     func animateCamera(position: MapCameraPosition, duration: Long) {
-        lastRequestedCameraPosition = position
-        applyPrincipalPoint(position.paddings)
-        let display = position.toHereDisplayCamera()
+        let requested = rememberPaddings(position)
+        lastRequestedCameraPosition = requested
+        let display = paddingApplied(requested).toHereDisplayCamera()
         let animation = MapCameraAnimationFactory.flyTo(
             target: display.target.toGeoCoordinates().toUpdate(),
             orientation: GeoOrientation(bearing: display.bearing, tilt: display.tiltDeg).toUpdate(),
@@ -202,11 +248,7 @@ final class HereMapViewController: NSObject,
     }
 
     func onMapCameraUpdated(_ cameraState: MapCamera.State) {
-        let mapCameraPosition = cameraState.toMapCameraPosition(
-            logicalTiltHint: lastRequestedCameraPosition?.tilt,
-            paddings: lastRequestedCameraPosition?.paddings,
-            visibleRegion: visibleRegion()
-        )
+        let mapCameraPosition = reportedCamera(cameraState)
         lastCameraPosition = mapCameraPosition
         cameraMoveListener?(mapCameraPosition)
 
@@ -256,34 +298,23 @@ final class HereMapViewController: NSObject,
     func onAnimationStateChanged(state: AnimationState) {
         switch state {
         case .started:
-            if let current = hereHolder.mapView.camera.state.toMapCameraPosition(
-                logicalTiltHint: lastRequestedCameraPosition?.tilt,
-                paddings: lastRequestedCameraPosition?.paddings,
-                visibleRegion: visibleRegion()
-            ) as MapCameraPosition? {
+            if let current = reportedCamera(hereHolder.mapView.camera.state) as MapCameraPosition? {
                 cameraMoveStartListener?(current)
             }
         case .completed:
             isAnimatingCamera = false
             if let position = lastRequestedCameraPosition {
+                scheduleCorrection(position)
                 overlayControllers.dispatchCameraChanged(position)
                 cameraMoveEndListener?(position)
             }
         case .cancelled:
             isAnimatingCamera = false
             overlayControllers.dispatchCameraChanged(
-                hereHolder.mapView.camera.state.toMapCameraPosition(
-                    logicalTiltHint: lastRequestedCameraPosition?.tilt,
-                    paddings: lastRequestedCameraPosition?.paddings,
-                    visibleRegion: visibleRegion()
-                )
+                reportedCamera(hereHolder.mapView.camera.state)
             )
             cameraMoveEndListener?(
-                hereHolder.mapView.camera.state.toMapCameraPosition(
-                    logicalTiltHint: lastRequestedCameraPosition?.tilt,
-                    paddings: lastRequestedCameraPosition?.paddings,
-                    visibleRegion: visibleRegion()
-                )
+                reportedCamera(hereHolder.mapView.camera.state)
             )
         @unknown default:
             isAnimatingCamera = false

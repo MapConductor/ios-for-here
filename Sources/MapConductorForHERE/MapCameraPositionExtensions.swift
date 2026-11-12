@@ -76,8 +76,9 @@ public extension MapCameraPosition {
 let hereVerticalFieldOfView: Double = 31.8
 
 extension MapCamera.State {
-    /// - Parameter paddings: いま地図に当てているパディング（主点の位置で表している）。
-    ///   ターゲットはパディングを除いた領域の中央にあるので、そのまま載せて返す。
+    /// 地図の中心をそのまま `position` にする。パディングで中心をずらしているときの
+    /// ターゲットへの戻しは呼び出し側（``CameraPaddingEmulation/restored(_:paddings:fov:viewportSize:unproject:)``）が行う。
+    /// - Parameter paddings: 結果に載せるパディング。
     func toMapCameraPosition(
         logicalTiltHint: Double? = nil,
         paddings: MapPaddingsProtocol? = nil,

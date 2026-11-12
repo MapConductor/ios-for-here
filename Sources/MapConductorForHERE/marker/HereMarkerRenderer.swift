@@ -4,7 +4,7 @@ import QuartzCore
 import UIKit
 
 @MainActor
-final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
+final class HereMarkerRenderer: MarkerOverlayRendererProtocol, MarkerDrawOrderFrameReceiver {
     typealias ActualMarker = MapMarker
 
     private static let maxConcurrentAnimations = 30
@@ -19,6 +19,28 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
 
     var animateStartListener: OnMarkerEventHandler?
     var animateEndListener: OnMarkerEventHandler?
+
+    // ── 重なり順 ────────────────────────────────────────────────
+    //
+    // HERE の `drawOrder` は大きな値を黙って捨てる（android の実機で 2849 は効き、4274 は足した順に
+    // 戻った。iPad Pro 11 でも帯の底を 4274 にすると足した順に戻った）。zIndex × 段数 のような符号化はできないので、地図に載っているマーカーを
+    // ``MarkerDrawOrder`` の順に並べ、順位（0...``maxDrawOrderRank``）を帯の底からの drawOrder にする。
+    // 順位にしたので、同じ zIndex の中の順（画面で下・左ほど手前）も付けられる。
+
+    /// 順位の上限。帯の底（約 450）に足しても android で効いた値に収まる。マーカーがこれより多いと
+    /// 順位を詰めて割り当てる（近い順位どうしが同じ値になる）。
+    static let maxDrawOrderRank = 2_047
+    /// マーカー帯の底。ほかの帯（ポリゴン・サークル・ポリライン）の drawOrder はこれより小さい。
+    private static let drawOrderBase = Int32(
+        OverlayBand.marker.rawValue * HereOverlayStacking.drawOrderBandStride
+            - HereOverlayStacking.drawOrderBandStride / 2
+    )
+
+    private var drawOrderFrame: MarkerDrawOrder.Frame = .northUp
+    /// 地図に載っているマーカーと、その順位を出した state。
+    private var placed: [String: (marker: MapMarker, state: MarkerState)] = [:]
+    /// 順位が変わりうる変更があった（足した・外した・zIndex か位置が変わった）。
+    private var needsRestack = false
 
     /// When set, drop/bounce animations run on the screen-space overlay layer
     /// (projection-independent: correct on tilted/rotated/globe views); the
@@ -43,9 +65,11 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
                 image: image,
                 anchor: bitmapIcon.toHereAnchor()
             )
-            marker.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.marker, zIndex: state.zIndex ?? 0), bandStride: HereOverlayStacking.drawOrderBandStride)
+            marker.drawOrder = Self.drawOrderBase
             marker.opacity = (state.getAnimation() != nil && markerAnimationRunners[state.id] == nil) ? 0.0 : 1.0
             appliedIconHashes[state.id] = iconContentHash(pngData, bitmapIcon)
+            placed[state.id] = (marker, state)
+            needsRestack = true
             mapView.mapScene.addMapMarker(marker)
             return marker
         }
@@ -54,7 +78,17 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
     func onChange(data: [MarkerOverlayChangeParams<MapMarker>]) async -> [MapMarker?] {
         data.map { params in
             guard let marker = params.prev.marker else { return nil }
-            apply(state: params.current.state, bitmapIcon: params.bitmapIcon, to: marker)
+            let state = params.current.state
+            apply(state: state, bitmapIcon: params.bitmapIcon, to: marker)
+            if let previous = placed[state.id]?.state,
+               previous.zIndex == state.zIndex,
+               previous.position.latitude == state.position.latitude,
+               previous.position.longitude == state.position.longitude {
+                placed[state.id] = (marker, state)
+            } else {
+                placed[state.id] = (marker, state)
+                needsRestack = true
+            }
             return marker
         }
     }
@@ -65,6 +99,7 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
             markerAnimationRunners[entity.state.id]?.stop()
             markerAnimationRunners.removeValue(forKey: entity.state.id)
             appliedIconHashes.removeValue(forKey: entity.state.id)
+            placed.removeValue(forKey: entity.state.id)
             if let marker = entity.marker {
                 mapView.mapScene.removeMapMarker(marker)
             }
@@ -108,19 +143,41 @@ final class HereMarkerRenderer: MarkerOverlayRendererProtocol {
         }
     }
 
-    func onPostProcess() async {}
+    func onPostProcess() async {
+        if needsRestack { restack() }
+    }
+
+    func onDrawOrderFrameChanged(_ frame: MarkerDrawOrder.Frame, entities: [MarkerEntity<MapMarker>]) async {
+        drawOrderFrame = frame
+        restack()
+    }
+
+    /// 地図に載っているマーカーを ``MarkerDrawOrder`` の順に並べ、順位を drawOrder に書く。
+    private func restack() {
+        needsRestack = false
+        let frame = drawOrderFrame
+        let ordered = placed.values
+            .map { (key: MarkerDrawOrder.key(zIndex: $0.state.zIndex, position: $0.state.position, frame: frame), marker: $0.marker) }
+            .sorted { $0.key < $1.key }
+        let last = max(ordered.count - 1, 1)
+        for (rank, entry) in ordered.enumerated() {
+            let scaled = ordered.count > Self.maxDrawOrderRank + 1 ? rank * Self.maxDrawOrderRank / last : rank
+            let order = Self.drawOrderBase + Int32(scaled)
+            if entry.marker.drawOrder != order { entry.marker.drawOrder = order }
+        }
+    }
 
     func unbind() {
         markerAnimationRunners.values.forEach { $0.stop() }
         markerAnimationRunners.removeAll()
         appliedIconHashes.removeAll()
+        placed.removeAll()
         mapView = nil
     }
 
     private func apply(state: MarkerState, bitmapIcon: BitmapIcon, to marker: MapMarker) {
         marker.coordinates = state.position.toGeoCoordinates()
         marker.anchor = bitmapIcon.toHereAnchor()
-        marker.drawOrder = OverlayStacking.globalZIndex(OverlayStackKey(.marker, zIndex: state.zIndex ?? 0), bandStride: HereOverlayStacking.drawOrderBandStride)
         marker.opacity = (state.getAnimation() != nil && markerAnimationRunners[state.id] == nil) ? 0.0 : 1.0
 
         // Only rebuild and reassign the MapImage when the icon content actually changed.

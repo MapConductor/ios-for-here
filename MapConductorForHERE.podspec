@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = "MapConductorForHERE"
-  s.version = "1.3.1"
+  s.version = "1.4.0"
   s.summary = "MapConductor's HERE Maps provider."
   s.license = { :type => "Apache-2.0", :file => "LICENSE" }
   s.author = "MapConductor"
@@ -9,7 +9,7 @@ Pod::Spec.new do |s|
   s.platform = :ios, "16.0"
   s.swift_version = "5.9"
   s.source_files = "Sources/MapConductorForHERE/**/*.swift"
-  s.dependency "MapConductorCore"
+  s.dependency "MapConductorCore", "~> 1.4"
   # ios-sdk/CLAUDE.md's "iOS Provider Distribution" section says a *dynamic* vendor framework
   # (heresdk.xcframework is confirmed dynamic - `file .../heresdk` reports "Mach-O 64-bit
   # dynamically linked shared library") should normally stay a plain `s.dependency "VendorSDK"`

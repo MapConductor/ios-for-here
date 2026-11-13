@@ -1,6 +1,6 @@
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 
 private let converter = HereZoomAltitudeConverter()
 
@@ -29,7 +29,7 @@ extension MapCameraPosition {
             let shiftedTarget = Spherical.computeOffset(
                 origin: target,
                 distance: altitude * tan(tiltRadians),
-                heading: bearing
+                heading: CameraBearing.toNativeHeading(bearing)
             )
             let adjustedHereZoom = converter.altitudeToZoomLevel(
                 altitude: altitude / max(cos(tiltRadians), 0.05),
@@ -42,7 +42,7 @@ extension MapCameraPosition {
                 target: shiftedTarget,
                 tiltDeg: tiltAbsDeg,
                 hereZoomLevel: adjustedHereZoom,
-                bearing: bearing
+                bearing: CameraBearing.toNativeHeading(bearing)
             )
         }
         
@@ -52,7 +52,7 @@ extension MapCameraPosition {
             target: target,
             tiltDeg: min(tilt, 90.0),
             hereZoomLevel: hereZoomLevel,
-            bearing: bearing
+            bearing: CameraBearing.toNativeHeading(bearing)
         )
     }
 
@@ -69,9 +69,19 @@ public extension MapCameraPosition {
     }
 }
 
+/// HERE（iOS）のカメラの縦の視野角（度）。
+///
+/// SDK は値を公開していない。iPad Pro 11 で、傾けた地図の中心と北の地点の画面位置から
+/// 焦点距離を求めて実測した値（tilt 30°〜60° で一定）。
+let hereVerticalFieldOfView: Double = 31.8
+
 extension MapCamera.State {
+    /// 地図の中心をそのまま `position` にする。パディングで中心をずらしているときの
+    /// ターゲットへの戻しは呼び出し側（``CameraPaddingEmulation/restored(_:paddings:fov:viewportSize:unproject:)``）が行う。
+    /// - Parameter paddings: 結果に載せるパディング。
     func toMapCameraPosition(
         logicalTiltHint: Double? = nil,
+        paddings: MapPaddingsProtocol? = nil,
         visibleRegion: VisibleRegion? = nil
     ) -> MapCameraPosition {
         let position = targetCoordinates.toGeoPoint()
@@ -102,18 +112,22 @@ extension MapCamera.State {
                     originalHereZoom,
                     latitude: originalCenter.latitude
                 ),
-                bearing: orientationAtTarget.bearing,
+                bearing: CameraBearing.bearingFromNativeHeading(orientationAtTarget.bearing),
                 tilt: -tiltAbsDeg,
-                visibleRegion: visibleRegion
+                paddings: paddings ?? MapPaddings.Zeros,
+                visibleRegion: visibleRegion,
+                fov: hereVerticalFieldOfView
             )
         }
 
         return MapCameraPosition(
             position: position,
             zoom: HereZoomAltitudeConverter.hereZoomToGoogleZoom(zoomLevel, latitude: position.latitude),
-            bearing: orientationAtTarget.bearing,
+            bearing: CameraBearing.bearingFromNativeHeading(orientationAtTarget.bearing),
             tilt: nativeTilt,
-            visibleRegion: visibleRegion
+            paddings: paddings ?? MapPaddings.Zeros,
+            visibleRegion: visibleRegion,
+            fov: hereVerticalFieldOfView
         )
     }
 }

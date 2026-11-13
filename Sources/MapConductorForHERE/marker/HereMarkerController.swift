@@ -2,12 +2,14 @@ import Combine
 import CoreGraphics
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 @MainActor
 final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarkerRenderer> {
     private weak var mapView: MapView?
+    /// 載せているマーカーのタイルの地図レイヤ名（``HereOverlayStacking`` の並びから外すため）。
+    private var tileLayerName: String?
     private var markerStatesById: [String: MarkerState] = [:]
     private var markerSubscriptions: [String: AnyCancellable] = [:]
     private var draggingMarkerId: String?
@@ -35,7 +37,17 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         super.init(markerManager: markerManager, renderer: renderer)
     }
 
+    /// 同一一覧の再送を見抜く門番。詳細は型のコメントに。
+    private var syncIdentity = MarkerListIdentity()
+
     func syncMarkers(_ markers: [Marker]) {
+        // 同じ一覧の再送は入口で帰す。SwiftUI はカメラが動くたびに body を
+        // 再評価し、そのたびに全マーカーがここへ来る。なぜそれが実害か
+        // （144k 件で操作の 89% が凍った）は core の MarkerListIdentity に。
+        guard syncIdentity.shouldProcess(markers) else {
+            refreshTileLayerIfNeeded()
+            return
+        }
         let newIds = Set(markers.map { $0.id })
         let oldIds = Set(markerStatesById.keys)
         var newStatesById: [String: MarkerState] = [:]
@@ -117,6 +129,7 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
             defaultMarkerIcon: defaultMarkerIconForTiling,
             tilingEnabled: tilingOptions.enabled,
             tiledMarkerIds: &localTiledMarkerIds,
+            addedTracker: addedTracker,
             shouldTile: { [shouldTileMarkers] state in
                 shouldTileMarkers && !state.draggable && state.getAnimation() == nil
             }
@@ -132,6 +145,9 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
         } else {
             removeTileLayer()
         }
+
+        // The newly tiled markers are on the map once their tile layer is.
+        await addedTracker.admitAndNotify(result.tiledAdded)
     }
 
     private func restoreNativeMarkersIfNeeded(states: [MarkerState]) async {
@@ -322,7 +338,10 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
             extraIconScale: Self.tileScale,
             cacheSizeBytes: tilingOptions.cacheSize,
             debugTileOverlay: tilingOptions.debugTileOverlay,
-            iconScaleCallback: tilingOptions.iconScaleCallback
+            iconScaleCallback: tilingOptions.iconScaleCallback,
+            // MapLibre と同じく tilingOptions から。渡し忘れると 14px の間引きが
+            // 黙って無効になり、密なデータで描画も突き合わせも重くなる。
+            declutterPx: tilingOptions.declutterPx
         )
         tileServer.register(routeId: routeId, provider: renderer)
         tileRenderer = renderer
@@ -370,8 +389,11 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
                 .forMap(mapView.hereMap)
                 .build()
             layer.setEnabled(true)
+            // マーカーのタイルはマーカーと同じ帯（自分の地図レイヤの中では一番上）。
+            HereOverlayStacking.place(layer, named: layerName, OverlayStackKey(.marker), on: mapView)
             tileDataSource = dataSource
             tileLayer = layer
+            tileLayerName = layerName
         } catch {
             NSLog("[MapConductor] HERE marker tile layer creation failed: %@", String(describing: error))
         }
@@ -379,6 +401,8 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
 
     private func removeTileLayer() {
         tileLayer?.setEnabled(false)
+        if let tileLayerName { HereOverlayStacking.remove(named: tileLayerName, on: mapView) }
+        tileLayerName = nil
         tileLayer = nil
         tileDataSource = nil
     }

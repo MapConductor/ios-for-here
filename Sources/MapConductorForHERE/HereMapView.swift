@@ -10,6 +10,8 @@ public struct HereMapView: View {
 
     private let handlers: MapViewHandlers<HereMapViewState>
     private let cameraRestriction: CameraRestriction?
+    private let style: MapViewStyle?
+    private let onStyleDiagnostics: (([String]) -> Void)?
     private let content: () -> MapViewContent
 
     public init(
@@ -23,11 +25,19 @@ public struct HereMapView: View {
         onCameraMove: OnCameraMoveHandler? = nil,
         onCameraMoveEnd: OnCameraMoveHandler? = nil,
         sdkInitialize: (() -> Void)? = nil,
+        /// How the map looks, when the app states it rather than naming a
+        /// design. `MapConductorVectorStyle` builds one; what happens
+        /// underneath depends on this backend and the app does not have to
+        /// know.
+        style: MapViewStyle? = nil,
+        onStyleDiagnostics: (([String]) -> Void)? = nil,
         @MapViewContentBuilder content: @escaping () -> MapViewContent = { MapViewContent() }
     ) {
         self.state = state
         self.projection = projection
         self.cameraRestriction = cameraRestriction
+        self.style = style
+        self.onStyleDiagnostics = onStyleDiagnostics
         self.handlers = MapViewHandlers(
             onMapLoaded: onMapLoaded,
             onMapClick: onMapClick,
@@ -58,6 +68,8 @@ public struct HereMapView: View {
                 cameraRestriction: cameraRestriction,
                 projection: projection,
                 handlers: handlers,
+                style: style,
+                onStyleDiagnostics: onStyleDiagnostics,
                 content: mapContent
             )
         }
@@ -91,6 +103,8 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
     let cameraRestriction: CameraRestriction?
     let projection: MapConductorCore.MapProjection
     let handlers: MapViewHandlers<HereMapViewState>
+    let style: MapViewStyle?
+    let onStyleDiagnostics: (([String]) -> Void)?
     let content: MapViewContent
 
     // 地図の組み立てと結線は `HereMapHost` が持つ。ここは SwiftUI のライフサイクルを
@@ -108,6 +122,9 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: HereMapWrapperView, context: Context) {
+        // Every evaluation of the app's `body` lands here; most calls do
+        // nothing. See `MapViewStyleHost.apply`.
+        context.coordinator.applyStyle(style, onDiagnostics: onStyleDiagnostics)
         // 制限値が変わったときだけ再適用する。
         context.coordinator.applyCameraRestriction(cameraRestriction)
         context.coordinator.updateMapDesignIfNeeded()
@@ -117,6 +134,7 @@ private struct HereMapViewRepresentable: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: HereMapWrapperView, coordinator: HereMapHost) {
+        coordinator.disposeStyle()
         coordinator.unbind()
         uiView.mapView.pause()
     }

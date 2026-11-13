@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 import heresdk
-import MapConductorCore
+@_spi(MapConductorDriver) import MapConductorCore
 import UIKit
 
 /// 地図一式（HERE の `MapView` + コントローラ群 + オーバーレイ結線）を保持するホスト。
@@ -46,6 +46,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     private var strategyMarkerSubscriptions: [String: AnyCancellable] = [:]
     private var strategyMarkerStatesById: [String: MarkerState] = [:]
     private var loadedMapScheme: MapScheme?
+    private var appliedUISettings: MapUISettings?
     private var latestContent = MapViewContent()
     private var isSceneLoaded = false
     private var needsOverlayResetOnNextSceneLoaded = false
@@ -85,6 +86,37 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         self.circleController = circleController
         self.groundImageController = groundImageController
         self.rasterLayerController = rasterLayerController
+        // Many polygons are drawn into raster tiles and shown as one raster
+        // layer; taps still resolve against the original shapes.
+        let polygonTiler = PolygonTiler()
+        polygonTiler.onTemplate = { [weak rasterLayerController] template, tileSize in
+            if let template {
+                await rasterLayerController?.upsert(state: PolygonTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterLayerController?.removeById(PolygonTiler.layerId)
+            }
+        }
+        polygonController.tiler = polygonTiler
+        // Many polylines likewise, in their own raster layer in the polyline band
+        // (under the natively drawn polylines); taps still resolve against the original lines.
+        let polylineTiler = PolylineTiler()
+        polylineTiler.onTemplate = { [weak rasterLayerController] template, tileSize in
+            if let template {
+                await rasterLayerController?.upsert(state: PolylineTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterLayerController?.removeById(PolylineTiler.layerId)
+            }
+        }
+        polylineController.tiler = polylineTiler
+        let circleTiler = CircleTiler()
+        circleTiler.onTemplate = { [weak rasterLayerController] template, tileSize in
+            if let template {
+                await rasterLayerController?.upsert(state: CircleTiler.rasterLayerState(template: template, tileSize: tileSize))
+            } else {
+                await rasterLayerController?.removeById(CircleTiler.layerId)
+            }
+        }
+        circleController.tiler = circleTiler
 
         // Route the simple overlays through the shared collector so each
         // controller subscribes to one source of truth instead of the map
@@ -97,6 +129,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         controller.registerOverlayController(polygonController)
         controller.registerOverlayController(groundImageController)
         controller.registerOverlayController(rasterLayerController)
+        controller.clearOverlaysHandler = { [weak self] in await self?.clearOverlays() }
 
         let overlayScope = MapOverlayScope()
         self.overlayScope = overlayScope
@@ -141,6 +174,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             self?.lastKnownCameraPosition = position
             self?.state.updateCameraPosition(position)
             self?.polylineController?.setCurrentCameraPosition(position)
+            self?.circleController?.setCurrentCameraPosition(position)
             self?.onCameraMoveStart?(position)
             self?.infoBubbleCoordinator?.updateAllLayouts()
             Task { [weak self] in
@@ -151,6 +185,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             self?.lastKnownCameraPosition = position
             self?.state.updateCameraPosition(position)
             self?.polylineController?.setCurrentCameraPosition(position)
+            self?.circleController?.setCurrentCameraPosition(position)
             self?.onCameraMove?(position)
             self?.infoBubbleCoordinator?.updateAllLayouts()
             Task { [weak self] in
@@ -161,6 +196,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             self?.lastKnownCameraPosition = position
             self?.state.updateCameraPosition(position)
             self?.polylineController?.setCurrentCameraPosition(position)
+            self?.circleController?.setCurrentCameraPosition(position)
             self?.onCameraMoveEnd?(position)
             self?.infoBubbleCoordinator?.updateAllLayouts()
             Task { [weak self] in
@@ -188,7 +224,10 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     }
 
     public func updateGestures(_ ui: MapUISettings) {
-        guard let mapView else { return }
+        guard let mapView, appliedUISettings != ui else { return }
+        // Camera events re-evaluate SwiftUI during a gesture. Configure the
+        // recognisers only when settings change, not for every camera frame.
+        appliedUISettings = ui
         markerController?.scrollGestureEnabled = ui.scrollGesture
 
         func apply(_ enabled: Bool, _ gesture: heresdk.GestureType) {
@@ -234,6 +273,11 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         overlayScope?.rasterLayerCollector.sync(content.rasterLayers.map { $0.state })
         overlayScope?.polylineCollector.sync(content.polylines.map { $0.state })
         overlayScope?.polygonCollector.sync(content.polygons.map { $0.state })
+        polygonController?.tiler?.refreshIfServerMoved()
+        if polylineController?.tiler?.setOptions(content.polylineTilingOptions) == true { overlayScope?.polylineCollector.flush() }
+        if circleController?.tiler?.setOptions(content.circleTilingOptions) == true { overlayScope?.circleCollector.flush() }
+        polylineController?.tiler?.refreshIfServerMoved()
+        circleController?.tiler?.refreshIfServerMoved()
         for handler in content.polygonSyncHandlers {
             let hullController = hullPolygonController
             handler.bindPolygonSync { [weak hullController] states in
@@ -275,6 +319,8 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         )
 
         self.mapView = mapView
+        // ラスター・グラウンドイメージをマップアイテムより下に置くための錨。アイテムより先に作る。
+        HereOverlayStacking.installAnchor(on: mapView)
         bind(state: state, mapView: mapView)
         // android-for-here の HereMapView.kt と同じ位置で適用する。
         applyCameraRestriction(cameraRestriction)
@@ -316,6 +362,17 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         applyStrategyRendering(nil)
     }
 
+    /// `clearOverlays()` から呼ばれる。strategy は接続したまま、描いたマーカーだけを消す。
+    /// 同じインスタンスの一覧が送られている間は描かず、顔ぶれが変わるか作り直された state が
+    /// 来たら描き直す（StrategyMarkerManager.clearMarkers・オーバーレイのコレクタと同じ）。
+    public func clearMarkers() async {
+        strategyClearedUntilListChanges = true
+        await strategyMarkerController?.clear()
+    }
+
+    /// ``clearMarkers()`` の後、一覧が変わるまで描かない印。
+    private var strategyClearedUntilListChanges = false
+
     public func beginContentPass() {
         strategyConnectedThisPass = false
     }
@@ -335,6 +392,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
                 let renderer = HereMarkerRenderer(mapView: mapView)
                 strategyMarkerRenderer = renderer
                 strategyMarkerController = StrategyMarkerController(strategy: strategy, renderer: renderer)
+                strategyClearedUntilListChanges = false
                 // find() の android 同等 screen 空間判定用に geo→screen 投影を注入する。
                 strategyMarkerController?.markerProjector = { [weak self] geo in
                     guard let mapView = self?.mapView,
@@ -375,6 +433,10 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
             newStatesById[state.id] = state
         }
         strategyMarkerStatesById = newStatesById
+        if strategyClearedUntilListChanges {
+            guard shouldSyncList else { return }
+            strategyClearedUntilListChanges = false
+        }
 
         for id in oldIds.subtracting(newIds) {
             strategyMarkerSubscriptions[id]?.cancel()
@@ -409,6 +471,10 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     public func loadInitialScene() {
         guard let mapView else { return }
         let scheme = state.mapDesignType.getValue()
+        // Mark the request before camera callbacks cause the first view update.
+        // Otherwise that update starts a second load of the same scene.
+        loadedMapScheme = scheme
+        rasterLayerController?.sceneWillLoad()
         mapView.mapScene.loadScene(mapScheme: scheme) { [weak self] error in
             guard let self else { return }
             if let error {
@@ -429,6 +495,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         guard loadedMapScheme != scheme else { return }
         loadedMapScheme = scheme
         isSceneLoaded = false
+        rasterLayerController?.sceneWillLoad()
         needsOverlayResetOnNextSceneLoaded = true
         controller?.setMapDesignType(state.mapDesignType)
     }
@@ -436,6 +503,19 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     /// 地図の描画を止める。SwiftUI の `dismantleUIView` が呼んでいた `mapView.pause()` 相当。
     public func pauseMapView() {
         mapView?.pause()
+    }
+
+    /// android-sdk の `clearOverlays()` と同じく、各オーバーレイのコントローラを空にする。
+    /// `controller.clearOverlaysHandler` から呼ばれる。
+    func clearOverlays() async {
+        await markerController?.clear()
+        await polylineController?.clear()
+        await polygonController?.clear()
+        await groundImageController?.clear()
+        await circleController?.clear()
+        await rasterLayerController?.clear()
+        // strategy（クラスタリングなど）が描いたマーカーも消す。
+        await state.serviceRegistry.clearMarkerRendering()
     }
 
     public func unbind() {
@@ -480,6 +560,7 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
         strategyMarkerController = nil
         controller?.setSceneLoadedHandler(nil)
         controller = nil
+        appliedUISettings = nil
         mapView = nil
     }
 
@@ -496,24 +577,24 @@ public final class HereMapHost: MapViewCoordinatorBase<HereMapViewState>, Marker
     }
 
     private func syncContentAfterSceneLoaded(resetOverlays: Bool) {
-        if resetOverlays {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // A scene load replaces HERE's layers, including style layers
+            // mounted outside the content collector. Replay those too.
+            await self.rasterLayerController?.sceneDidLoad()
+            if resetOverlays {
                 await self.markerController?.clear()
                 await self.polylineController?.clear()
                 await self.polygonController?.clear()
                 await self.circleController?.clear()
                 await self.groundImageController?.clear()
-                await self.rasterLayerController?.clear()
                 // The clears above bypass the overlay collectors, which still
                 // hold their membership. Reset them so the following
                 // syncContent re-adds the overlays instead of seeing "no
                 // change" and skipping the repopulate after a scene reload.
                 self.overlayScope?.clear()
-                self.syncContent(self.latestContent)
             }
-        } else {
-            syncContent(latestContent)
+            self.syncContent(self.latestContent)
         }
     }
 

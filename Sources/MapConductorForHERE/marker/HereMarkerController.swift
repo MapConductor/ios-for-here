@@ -300,15 +300,12 @@ final class HereMarkerController: AbstractMarkerController<MapMarker, HereMarker
 
     private func subscribeToMarker(_ state: MarkerState) {
         guard markerSubscriptions[state.id] == nil else { return }
-        markerSubscriptions[state.id] = state.asFlow()
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                guard let self, self.markerStatesById[state.id] != nil else { return }
-                Task { [weak self] in
-                    await self?.update(state: state)
-                }
+        markerSubscriptions[state.id] = state.onChange { [weak self] in
+            guard let self, self.markerStatesById[state.id] != nil else { return }
+            Task { [weak self] in
+                await self?.update(state: state)
             }
+        }
     }
 
     func unbind() {
